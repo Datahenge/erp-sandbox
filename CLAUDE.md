@@ -18,7 +18,8 @@ and nowhere else. A status line duplicated into this file goes stale first and
 misdirects every session that reads it before anything else.
 
 **`internal/` is a separate, private repository** (decision #53), checked out
-inside this one and gitignored here. It holds `lessons.md` and `status.md`. It
+inside this one and gitignored here. It holds `lessons.md`, `status.md`, and
+`releasing.md` — how to build and publish to PyPI. It
 exists only in a maintainer's checkout; if it is absent, there is no status or
 history to read, and nothing in `docs/` depends on it. Commit to it with
 `git -C internal`, never from this repository.
