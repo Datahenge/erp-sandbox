@@ -77,12 +77,13 @@ Claude's recommendations are **not decisions** and are kept out of this file
 deliberately. They live in the maintainers' private notes and move here only when Brian
 confirms one.
 
-## Open items — none remain
+## Open items
 
-The last one, two uncommitted files in the old bench's `erpnext` clone, was
-resolved by Brian on 2026-08-23.
+Not decided. Nothing here blocks work.
 
-Nothing blocks work.
+| Item | Raised | What is open |
+|---|---|---|
+| **A release script, `tools/release.py`** | 2026-11-02 | Whether to build it. **Claude's proposal, not agreed:** a standard-library script with three verbs. `prepare <major\|minor\|patch>` refuses a dirty tree, a branch other than `main`, a failing `selftest`, an empty `## Unreleased` or an existing tag; then bumps `erp_sandbox/__init__.py` (#37), dates the CHANGELOG section, commits and tags. `build` refuses unless `HEAD` is the version's tag; deletes `build/`, `dist/` and `*.egg-info`, runs `uv build`, and checks the wheel's contents, the sdist for anything private (#53), and `twine check`. `publish [--test]` uploads only `dist/erp_sandbox-<version>*`; `--test` installs it from TestPyPI into a temporary venv and runs it; the PyPI upload refuses until the tag is on GitHub. It never pushes and stores no token. Prompted by a `uv publish` that tried to re-upload a stale 0.2.0 left in `dist/`. `uv version --bump` cannot do this: it edits only a literal version in `pyproject.toml`, which #37 rules out. Publishing from GitHub Actions with Trusted Publishing was offered alongside it and is not part of this item. |
 
 ---
 
