@@ -10,6 +10,9 @@ Dates are when the work landed on `main`.
 ## Unreleased
 
 ### Changed
+- **On a shared VPS, the admin installs erp-sandbox once for every user**
+  with `sudo pipx install --global` (decision #54). `docs/vps.md` has the step;
+  laptops still install per-user.
 - **Renamed `erp-sandbox`** (decision #52), replacing `erpnext-devstack`. Frappe's
   trademark policy requires permission for a product name containing ERPNext,
   and PyPI already has an unrelated `devstack`.

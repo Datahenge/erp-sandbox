@@ -92,6 +92,19 @@ Two roles, and each waits on the other once.
      and `debug.port` if debugging is on.
    - Preflight refuses a port or host assigned to someone else.
    - Real names and ports belong in the VPS's file, never in this repository.
+7. **Install erp-sandbox for every user** (#54):
+   ```sh
+   sudo apt install pipx
+   sudo pipx install --global git+https://github.com/Datahenge/erp-sandbox.git
+   erp-sandbox --version          # path must be under /opt/pipx/
+   ```
+   - The environment goes in `/opt/pipx`, the commands in `/usr/local/bin`.
+   - Needs the system Python to be 3.11 or newer: Debian 12+ and Ubuntu 24.04+
+     qualify.
+   - **Not `uv` here.** A uv-downloaded Python lands in root's home, which
+     other users cannot read, and the command fails for them.
+   - **Upgrading** changes every developer's tool at once:
+     `sudo pipx upgrade --global erp-sandbox`. Tell them first.
 
 ## For the VPS admin — once per developer
 
@@ -112,9 +125,15 @@ Two roles, and each waits on the other once.
 
 ## For the developer
 
-1. **Install erp-sandbox and create the environment** as in
-   [setup.md](setup.md). `erp-sandbox init acme-dev` creates
-   `~/erp-sandboxes/acme-dev/`.
+1. **Create the environment** as in [setup.md](setup.md), skipping its
+   install step — the admin has installed erp-sandbox for every user.
+   `erp-sandbox init acme-dev` creates `~/erp-sandboxes/acme-dev/`.
+   - **Do not install a second copy** with `uv tool install` or `pipx install`.
+     `~/.local/bin` usually comes before `/usr/local/bin` on `PATH`, so your
+     copy silently shadows the shared one. `erp-sandbox --version` shows which
+     one runs; it should be under `/opt/pipx/`.
+   - **Working on erp-sandbox itself** is the exception: an editable install
+     ([contributing.md](contributing.md)) is meant to shadow it.
 2. **Use the ports and subdomain the admin allocated** in `config.toml`:
    ```toml
    [ports]
