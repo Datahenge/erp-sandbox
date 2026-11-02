@@ -1,0 +1,53 @@
+@@{header}
+#
+# Rootless podman overlay.  Applied on top of docker-compose.yml:
+#
+#   podman-compose -f docker-compose.yml -f compose.podman.yml up -d
+#
+# Under rootless podman the container's uid 0 maps to the host user and
+# container uid 1000 maps into the subuid range, so a container writing into a
+# bind mount produces files the developer cannot edit -- which defeats the
+# entire point of the tool (risk 5).  keep-id maps the host user to the same
+# uid inside the container instead.
+#
+# keep-id is not valid Docker syntax.  That is why this lives in a generated
+# overlay rather than the base compose file (decision #1).
+#
+# Only the two services that write into a bind mount get keep-id.  nginx
+# reads its configuration read-only and redis holds nothing worth keeping
+# (decision #6).
+#
+# All four get `restart: always` in place of the base file's unless-stopped
+# (decision #47). podman-restart.service starts only restart-policy=always
+# containers at boot, so unless-stopped would leave a rootless stack down after
+# every reboot. `erp-sandbox down` removes the containers, so always cannot bring
+# back a stack that was taken down on purpose.
+
+# podman-compose puts every service into one shared pod by default, and podman
+# refuses --userns together with --pod:
+#
+#   Error: --userns and --pod cannot be set together
+#
+# A pod buys nothing here -- the services already share a network and are
+# addressed by name -- while keep-id is the whole reason this overlay exists
+# (risk 5). So the pod is what gives way.
+x-podman:
+  in_pod: false
+
+services:
+
+  mariadb:
+    restart: always
+    userns_mode: keep-id
+    user: "${HOST_UID:?run-erp-sandbox-render-first}:${HOST_GID:?run-erp-sandbox-render-first}"
+
+  redis:
+    restart: always
+
+  nginx:
+    restart: always
+
+  bench:
+    restart: always
+    userns_mode: keep-id
+    user: "${HOST_UID:?run-erp-sandbox-render-first}:${HOST_GID:?run-erp-sandbox-render-first}"@@{bench_debug_ports}

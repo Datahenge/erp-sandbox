@@ -1,0 +1,49 @@
+#!/bin/sh
+# erp-sandbox's pre-commit hook. Install with: tools/install-hooks.sh
+#
+# Three checks, chosen because each has already caught something:
+#
+#   compile   a syntax error committed is a syntax error someone else pulls.
+#   selftest  the config layer, the fetch logic and the CLI. No containers, no
+#             network, so there is no excuse for skipping it.
+#   secrets   decision #17: no client value in a committed file, and no
+#             credential in one either. The genericity grep lives in
+#             `erp-sandbox doctor`, but doctor needs a running environment and a
+#             commit does not.
+#
+# Skip deliberately with `git commit --no-verify` when you mean to.
+
+set -e
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+fail() { printf 'pre-commit: %s\n' "$1" >&2; exit 1; }
+
+python3 -m compileall -q erp_sandbox >/dev/null || fail "erp_sandbox/ does not compile"
+
+python3 -m erp_sandbox selftest >/tmp/erp-sandbox-selftest.$$ 2>&1 || {
+    tail -20 /tmp/erp-sandbox-selftest.$$ >&2
+    rm -f /tmp/erp-sandbox-selftest.$$
+    fail "selftest failed"
+}
+rm -f /tmp/erp-sandbox-selftest.$$
+
+# Anything staged that looks like a resolved secret. Deliberately crude: it is
+# a last line of defence, not the mechanism. config.toml and .erp-sandbox/ are
+# gitignored, so reaching this means something has gone unusually wrong.
+staged="$(git diff --cached --name-only --diff-filter=ACM)"
+for path in $staged; do
+    case "$path" in
+        config.toml|.erp-sandbox/*|*/config.toml)
+            fail "$path holds real values and must not be committed" ;;
+    esac
+done
+
+if [ -n "$staged" ]; then
+    if git diff --cached -U0 -- $staged | grep -nE '^\+.*(ghp_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,})'; then
+        fail "that looks like a personal access token"
+    fi
+fi
+
+exit 0

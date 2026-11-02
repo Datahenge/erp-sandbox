@@ -1,0 +1,17 @@
+@@{header}
+#
+# honcho runs this inside the bench container.  It is deliberately shorter than
+# a stock bench Procfile: the three redis_* lines are gone because redis is its
+# own container with three logical databases (decision #6), and the ports come
+# from config.toml rather than bench's defaults.
+#
+# The web line varies: plain `bench serve` normally, and the same server under
+# debugpy with --noreload when [debug].enabled is set.  render.web_command()
+# explains why the reloader cannot stay on.  Only that one process is ever
+# instrumented (decision #29).
+
+web: @@{web}
+socketio: /usr/local/bin/node apps/frappe/socketio.js
+watch: bench watch
+schedule: bench schedule
+@@{workers}

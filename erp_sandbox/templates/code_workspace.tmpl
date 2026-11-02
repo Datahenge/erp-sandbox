@@ -1,0 +1,45 @@
+@@{header}
+//
+// Open THIS FILE (File > Open Workspace from File), not the folder. It pins
+// the workspace root, which the debugger's path mapping resolves against.
+//
+// Your own settings and launch configurations go in .vscode/, which erp-sandbox
+// never writes. Folder settings override the workspace settings below, and
+// your launch configurations appear alongside these.
+{
+  "folders": [
+    { "name": "@@{project_name}", "path": "." }
+  ],
+  "settings": {
+    // There is deliberately no "python.defaultInterpreterPath". bench/env is
+    // built inside the container, so its interpreter will not run on this
+    // host, and no host interpreter can import frappe -- see
+    // requirements.md section 3. Analysis does not need one: the paths below
+    // are what resolve the imports, and an analyzer reads source rather than
+    // executing it.
+    //
+    // Two spellings on purpose. python.analysis.* is Pylance; VSCodium cannot
+    // install Pylance and uses the bundled Jedi, which reads
+    // python.autoComplete.*. A setting whose extension is absent is ignored.
+    // "python.languageServer" is left unset: it is window-scoped, so a value
+    // here could not be overridden per folder.
+    "python.analysis.extraPaths": [
+@@{extra_paths}
+    ],
+    "python.autoComplete.extraPaths": [
+@@{extra_paths}
+    ],
+    // Stops VSCode activating bench/env in every new terminal, which would
+    // hand you the container's interpreter on the host.
+    "python.terminal.activateEnvironment": false,
+    // The database lives here. Watching it is wasted CPU and risks the
+    // inotify limit. bench/env stays searchable on purpose -- reading the
+    // pinned dependencies is what the bind mount is for.
+    "files.watcherExclude": {
+      "**/data/**": true
+    },
+    "search.exclude": {
+      "data": true
+    }
+  }@@{launch_block}
+}

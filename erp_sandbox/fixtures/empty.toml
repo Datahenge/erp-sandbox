@@ -1,0 +1,3 @@
+# expect: [project] section is missing
+# expect: [[apps]] is missing
+# expect: [database] section is missing

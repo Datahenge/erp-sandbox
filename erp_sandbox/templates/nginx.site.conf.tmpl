@@ -1,0 +1,90 @@
+@@{header}
+#
+# The single entry point (decision #16).  Both upstreams are ports on the one
+# bench container; nginx multiplexes them onto @@{port_http} on the host.
+#
+# The /socket.io route is the reason this container exists.  In Frappe v12 the
+# browser reads socketio_port out of the boot payload and opens a websocket to
+# it directly.  Publish only the web port and realtime dies silently -- no
+# notifications, no progress bars, no list refresh -- and it reads like an
+# application bug rather than a proxy one (risk 8).
+
+# There are deliberately no `upstream` blocks here.
+#
+# A name inside one is resolved once, when nginx loads its configuration, and a
+# failure there is fatal. With the bench container stopped -- which is most of
+# what a developer does to it -- nginx would refuse to start at all, and the
+# symptom is a proxy that vanishes rather than a proxy that says 502.
+#
+# Naming the backend in a variable defers resolution to request time, using the
+# resolver that conf/nginx/00-resolver.sh reads out of the container's own
+# /etc/resolv.conf. nginx then stays up across bench restarts, and the URI has
+# to be appended explicitly because a proxy_pass containing a variable does not
+# carry it automatically.
+
+# Behind a TLS-terminating proxy (Caddy on a VPS, decision #42) this nginx sees
+# plain http, so $scheme says http while the browser is on https. Frappe uses
+# X-Forwarded-Proto to decide what URLs to build, and socketio.js calls back
+# to the request's Origin to authorise a document subscription -- an Origin
+# built from $scheme would send that callback to http:// and lose it. So the
+# proxy's own header wins when there is one, and $scheme is the answer only
+# when nginx is the first hop, as on a laptop.
+map $http_x_forwarded_proto $erp_sandbox_forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # Frappe file attachments are routinely larger than nginx's 1m default.
+    client_max_body_size 50m;
+    client_body_timeout 300s;
+
+    # Assets are served from the bind-mounted bench tree, so an asset rebuilt
+    # on the host is served without restarting anything.
+    root /workspace/bench/sites;
+
+    location /assets {
+        try_files $uri =404;
+    }
+
+    location /socket.io {
+        # Must come before location / .  The upgrade headers are what turn
+        # this into a websocket rather than a hanging poll.
+        set $backend "@@{bench_service}:@@{internal_socketio}";
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header X-Frappe-Site-Name @@{site_name};
+        proxy_set_header Origin $erp_sandbox_forwarded_proto://$http_host;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $erp_sandbox_forwarded_proto;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        proxy_pass http://$backend$request_uri;
+    }
+
+    location / {
+        set $backend "@@{bench_service}:@@{internal_web}";
+
+        proxy_set_header X-Frappe-Site-Name @@{site_name};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $erp_sandbox_forwarded_proto;
+
+        # Long enough for a slow report or a heavy migrate to finish rather
+        # than returning a 504 that looks like a crash.
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
+        proxy_redirect off;
+        proxy_pass http://$backend$request_uri;
+    }
+}

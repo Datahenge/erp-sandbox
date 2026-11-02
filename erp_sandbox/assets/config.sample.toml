@@ -1,0 +1,273 @@
+# ═══ config.toml ══════════════════════════════════════════════════════════
+#
+# The only file you edit. Everything else is generated from it by
+# `erp-sandbox render`, and generated files are overwritten on every render.
+#
+#   erp-sandbox init acme-dev && cd acme-dev
+#   $EDITOR config.toml
+#   erp-sandbox build
+#
+# config.toml is gitignored. This sample is committed, so every value in it is
+# a placeholder -- acme, example.com. Nothing real belongs here.
+
+[project]
+name     = "acme"                # compose project + container name prefix
+                                 #   lowercase, [a-z0-9_-]
+site     = "site_acme1"          # Frappe site name; becomes bench/sites/<name>
+timezone = "America/Los_Angeles"
+
+# ─── Host-published ports ────────────────────────────────────────────────
+# Only these two reach the host. Change them if something already listens;
+# preflight checks both before the build does any work.
+[ports]
+http    = 8101                   # nginx: the URL you open in a browser
+mariadb = 3316                   # for DBeaver / DataGrip / the mysql client
+# bind  = "127.0.0.1"            # where http is published; this is the default.
+                                 #   "0.0.0.0" reaches every interface -- under
+                                 #   Docker that bypasses ufw. mariadb is always
+                                 #   loopback.
+
+# ─── Internal ports ──────────────────────────────────────────────────────
+# Container network only -- nothing here is published. You would change these
+# only to avoid a collision inside the bench container. socketio and the file
+# watcher stay internal deliberately: nginx multiplexes /socket.io onto
+# ports.http, which is what keeps realtime working through one port.
+[internal_ports]
+web          = 8000
+socketio     = 9000
+file_watcher = 6787
+mariadb      = 3306
+redis        = 6379
+
+# ─── The stack ───────────────────────────────────────────────────────────
+# These pin the toolchain. The defaults below are correct for ERPNext v12.
+# A v13/v14 environment changes them.
+[stack]
+frappe_version = 12               # which Frappe series; must be one this
+                                  # tool knows how to build (decision #28)
+base_image    = "docker.io/library/debian:bullseye-slim"  # bullseye = python 3.9
+python        = "3.9"
+node          = "12.22.12"
+yarn          = "1.22.22"           # yarn 1.x; v12 asset builds predate berry
+wkhtmltopdf   = "0.12.6.1-2"     # packaging release, NOT the wkhtmltopdf version;
+                                 #   must be a patched-qt build, and the release
+                                 #   that ships a bullseye .deb is 0.12.6.1-2
+bench         = "5.24.1"
+mariadb_image = "docker.io/library/mariadb:10.4.6"
+redis_image   = "docker.io/library/redis:6.2-bullseye"
+nginx_image   = "docker.io/library/nginx:1.24-bullseye"
+
+# System packages an app needs in order to *build*. Empty for a stock
+# Frappe/ERPNext bench. An app with a compiled dependency will say so in its own
+# README -- e.g. one wrapping a system service may need that service's -dev
+# package. Debian package names, installed into the bench image.
+extra_packages = []
+
+# Ceilings pip may not resolve past while installing the apps, as a pip
+# constraints file (`-c`). NOT a requirements file: nothing here is installed,
+# and a package is only capped if some app already asks for it. It applies to
+# every app's install, not one of them.
+#
+# `erp-sandbox init` seeds this from the Frappe series template. It is yours to
+# edit, and whatever it says is what the build uses -- an empty list means no
+# constraints at all. erp-sandbox never adds one back.
+#
+# Why the v12 seed exists: vanilla v12 pins openpyxl==2.6.4, whose compat layer
+# reads numpy.float, removed in numpy 1.24. Nothing in a 2019 requirements.txt
+# caps numpy, so pip is free to install 2.x and the site build dies importing
+# openpyxl.
+#
+# Empty it if your fork has modernised pins. A fork pinning numpy==1.26.4 has
+# no candidate left under this cap, and pip says only "No matching distribution
+# found for numpy==1.26.4" -- see docs/troubleshooting.md.
+#
+# One entry per package, no spaces inside an entry: "numpy<1.24", not
+# "numpy < 1.24".
+pip_constraints = ["numpy<1.24"]
+
+# ─── The tool itself ─────────────────────────────────────────────────────
+# The oldest erp-sandbox that can build this environment.
+#
+# One installed erp-sandbox now serves every environment on the machine, so
+# upgrading it changes all of them at once. This is how an environment says
+# what it needs: preflight refuses to build with an older tool rather than
+# failing somewhere in the middle on a feature that did not exist yet.
+#
+# `erp-sandbox init` writes the version that created the environment. Raise it by
+# hand if you come to depend on something newer.
+
+[erp-sandbox]
+min_version = "0.1.0"
+
+# ─── Applications ────────────────────────────────────────────────────────
+# Order matters: it is the clone order and the install order. frappe must be
+# first. Frappe and ERPNext are not special-cased -- they are entries like any
+# other, which is what makes this tool generic.
+#
+#   name  — the Frappe app name; must match the app's own module name
+#   repo  — a clone URL: https://host/path, ssh://user@host/path, or the
+#           scp-style user@host:path. Both schemes are supported.
+#   ref   — branch or tag; whatever `git checkout` accepts
+#   install — false clones the app and leaves it off the site
+#
+#   requires_credentials — true means this clone needs the [credentials.<host>]
+#           entry for its host. It is not the same question as "is the
+#           repository private": an ssh remote to a private repository
+#           authenticates with your own key, which this tool does not manage,
+#           so it takes false. Set true only for an https clone that needs a
+#           token, and preflight will refuse the combination of true and ssh.
+#
+#   blobless — optional, false when absent; set true below for frappe and
+#           erpnext, the two clones that cost the disk. true clones with
+#           --filter=blob:none: every commit and branch arrives, but the
+#           contents of files at old commits are fetched only when a command
+#           asks for one. Measured on 2026-08-23, frappe and erpnext at
+#           version-12 carry 1.4 GiB of objects between them and about 70 MiB
+#           of that is commits, trees and the current files.
+#           The price is that `git log -p`, `git blame` on an old file, and
+#           `git bisect` need the network, and are slower the first time. Leave
+#           it false for an app you dig through history in; it is refused
+#           outright for an app with requires_credentials = true, because those
+#           later fetches happen long after the token is gone. Applies when the
+#           app is cloned -- setting it later does not shrink a clone you
+#           already have, and clearing it does not fetch the history back.
+
+[[apps]]
+name                 = "frappe"
+repo                 = "https://github.com/frappe/frappe.git"
+ref                  = "version-12"
+requires_credentials = false
+install              = true
+blobless             = true       # history arrives; old file contents on demand
+
+[[apps]]
+name                 = "erpnext"
+repo                 = "https://github.com/frappe/erpnext.git"
+ref                  = "version-12"
+requires_credentials = false
+install              = true
+blobless             = true       # most of this clone is history you may never read
+
+# Your own apps go here. They are commented out so that `erp-sandbox build` works
+# immediately after `erp-sandbox init` -- frappe and erpnext above are public, so
+# an unedited config produces a stock ERPNext and proves the machine works.
+# Uncomment and edit when you have real repositories to add.
+#
+# [[apps]]
+# name                 = "acme_app"
+# repo                 = "https://git.example.com/acme/acme_app.git"
+# ref                  = "master"
+# requires_credentials = true     # needs the [credentials."git.example.com"] entry below
+# install              = true
+#
+# [[apps]]
+# name                 = "acme_tools"
+# repo                 = "git@git.example.com:acme/acme_tools.git"
+# ref                  = "version-12"
+# requires_credentials = false    # ssh: your own key authenticates, no token needed
+# install              = false    # cloned and importable, but not installed on the site
+
+# ─── Credentials ─────────────────────────────────────────────────────────
+# Keyed by git host, so GitHub and GitLab repos can coexist in one config.
+# A host needs an entry here only if some app on it has
+# requires_credentials = true.
+#
+# Prefer "env:NAME". The token then lives in your shell and never touches a
+# file. A literal is accepted -- config.toml is gitignored -- but the renderer
+# warns, because the value is now on disk.
+#
+# The token is used host-side only, by erp-sandbox fetch, for the
+# duration of one clone. It never enters a container, an image layer, or a
+# build argument.
+# Commented out along with the apps that needed them. A [credentials] entry is
+# required only for an app with requires_credentials = true.
+#
+# [credentials."git.example.com"]
+# username = "your-username"
+# token    = "env:GIT_PAT"
+#
+# [credentials."gitlab.com"]
+# username = "your-username"
+# token    = "env:GITLAB_PAT"
+
+# ─── Where secrets come from ─────────────────────────────────────────────
+# Every "env:NAME" above is looked up in your shell first, then in this file.
+# The shell wins, so `export NAME=...` overrides the file for one run.
+# preflight prints which source answered for each secret.
+#
+# Omit this section to use the default, secrets.env, next to config.toml.
+# Set file = "" to use the shell only. The path may be absolute or start with
+# ~, which is how you keep secrets outside the repository entirely.
+#
+# It cannot be ".env" -- render.py generates that file for compose and
+# overwrites it on every render.
+# [secrets]
+# file = "secrets.env"
+
+# ─── Database ────────────────────────────────────────────────────────────
+[database]
+root_password  = "env:DB_ROOT_PASSWORD"
+
+# seed = how the site's database gets its contents.
+#   "new_site"       — bench new-site, then install each install = true app.
+#                      Empty but working. The only mode that needs no client
+#                      data, and therefore the default.
+#   "sql_dump"       — restore a raw SQL dump you supply.
+#   "frappe_backup"  — bench restore a frappe-native backup tarball.
+#
+# The tool never distributes client data. Dump files are yours, at a path on
+# your own disk.
+seed           = "new_site"
+dump_path      = ""              # required unless seed = "new_site"
+
+# REQUIRED with a restored dump, and there is no way to recover from getting
+# it wrong quietly: without the encryption_key that matches the dump, every
+# stored password in the restored site is unreadable, and you find out weeks
+# later when an integration cannot authenticate. Prefer "env:NAME".
+encryption_key = ""
+
+[site]
+admin_password = "env:ADMIN_PASSWORD"
+
+# Shared VPS only: the https address Caddy serves this site on, one subdomain
+# per environment. It becomes Frappe's host_name, so emails, webhook payloads
+# and OAuth callbacks carry it, and `erp-sandbox proxy-snippet` prints the Caddy
+# block for it. Leave it unset on a laptop. See docs/vps.md.
+# public_url = "https://acme.dev.example.com"
+
+# ─── Debugging ───────────────────────────────────────────────────────────
+# Opt-in remote debugging with debugpy: set a breakpoint in VSCode (or any
+# DAP-speaking editor) and step through the framework and your own apps.
+#
+# Off by default, because turning it on publishes a THIRD host port -- and a
+# debug port runs arbitrary code by design, so it is bound to 127.0.0.1 only.
+#
+# Turning this on and re-rendering writes the attach configuration into
+# <name>.code-workspace. Open that workspace -- File > Open Workspace from
+# File, not the folder -- and pick it from the debug dropdown. Opening the
+# folder instead leaves the path mapping unresolved, and the editor sees host
+# paths while the interpreter reports container ones, so breakpoints bind to
+# nothing and never fire without reporting anything.
+#
+# target = "web" is the only value. The other long-running frappe processes
+# reach your code through a fork that debugpy does not follow, so a breakpoint
+# in them never fires -- see docs/technical.md section 10 before assuming a
+# worker can be debugged this way.
+#
+# Enabling this turns OFF the web server's auto-reload. That is deliberate and
+# unavoidable: the reloader re-executes the server, which drops the debugger.
+# While debugging, restart the web process to pick up code changes:
+#
+#   erp-sandbox restart bench
+#
+# Omit this section entirely to leave debugging off.
+[debug]
+enabled = false
+target  = "web"
+port    = 5678
+
+# ─── Frappe runtime settings → common_site_config.json ───────────────────
+[frappe]
+developer_mode     = 1
+background_workers = 1           # worker processes per queue (short/long/default)
+gunicorn_workers   = 2

@@ -1,0 +1,64 @@
+# @@{project_name} — an erp-sandbox environment
+
+@@{header}
+
+Put your own notes in `CLAUDE.md` at the environment root. That file is yours;
+erp-sandbox writes it once and never rewrites it.
+
+## What this is
+
+An ERPNext development environment built by `erp-sandbox`. Source under
+`bench/apps/` is editable on this host. Everything that runs, runs in a
+container.
+
+| | |
+|---|---|
+| Site | `@@{site_name}` |
+| Web | `http://localhost:@@{port_http}` |
+| MariaDB | `127.0.0.1:@@{port_mariadb}` |
+| Bench container | `@@{bench_container}` |
+
+Apps, in install order:
+
+@@{apps_block}
+@@{debug_block}
+## Running things
+
+`erp-sandbox` works from anywhere in this tree. `erp-sandbox --help` lists every
+verb; these four prevent the wrong reflex:
+
+- `erp-sandbox bench <args>` — any bench command, inside the container
+- `erp-sandbox shell` — a shell in the bench container
+- `erp-sandbox mariadb [-e "..."]` — a mysql client on the site database
+- `erp-sandbox restart bench` — restart. **Never `bench restart`**: that is a
+  production command that talks to supervisor, which this environment does not
+  run
+
+## What will waste your time
+
+- **Do not activate `bench/env`.** It is built inside the container, so its
+  interpreter and console-script shebangs are the container's Python and will
+  not execute on this host. It is mounted so you can *read* it. There is no
+  host interpreter that can import frappe, and that is deliberate, not an
+  oversight — do not install one, and do not build a host virtualenv.
+- **There is no host `bench`.** Reach it through `erp-sandbox bench`, which runs
+  it in the container as the host user.
+- **`bench/apps/<app>/` are independent git repositories.** A `git status`,
+  `git check-ignore` or `cat .gitignore` run from inside one answers about
+  *that* repository, not this environment. A shell's working directory persists
+  between commands, so one earlier `cd` is enough to make every later answer
+  quietly wrong. Use `git -C <path>`, or absolute paths.
+- **Generated files are never hand-edited.** `config.toml` is the source of
+  truth and `erp-sandbox render` rewrites everything else; `erp-sandbox render
+  --list` names them. If a generated file is wrong, fix `config.toml` and
+  re-render. They are disposable — never restore one by hand. A hook refuses
+  the write rather than trusting this paragraph, so an Edit that comes back
+  "Refused by erp-sandbox's edit guard" is working as designed: go to
+  `config.toml`. If what you need has no home there, say so — that is a gap in
+  the tool, and working around it by hand hides it.
+- **Never print a resolved password or token** into a transcript, a log, or a
+  file. `.env` and `.erp-sandbox/secrets.env` hold real values.
+
+## When something looks broken
+
+`erp-sandbox doctor` diagnoses without repairing. Run it before changing anything.

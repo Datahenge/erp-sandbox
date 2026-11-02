@@ -1,0 +1,44 @@
+# A config that is well-formed and complete except for one whole section.
+# expect: [database] section is missing
+# expect: database.root_password is missing
+
+[project]
+name     = "acme"
+site     = "acme.example.com"
+timezone = "UTC"
+
+[ports]
+http    = 8080
+mariadb = 3307
+
+[internal_ports]
+web          = 8000
+socketio     = 9000
+file_watcher = 6787
+mariadb      = 3306
+redis        = 6379
+
+[stack]
+base_image    = "docker.io/library/debian:bullseye-slim"
+python        = "3.9"
+node          = "12.22.12"
+wkhtmltopdf   = "0.12.6.1-2"
+bench         = "5.24.1"
+mariadb_image = "docker.io/library/mariadb:10.4.6"
+redis_image   = "docker.io/library/redis:6.2-bullseye"
+nginx_image   = "docker.io/library/nginx:1.24-bullseye"
+
+[[apps]]
+name                 = "frappe"
+repo                 = "https://github.com/frappe/frappe.git"
+ref                  = "version-12"
+requires_credentials = false
+install              = true
+
+[site]
+admin_password = "env:ADMIN_PASSWORD"
+
+[frappe]
+developer_mode     = 1
+background_workers = 1
+gunicorn_workers   = 2

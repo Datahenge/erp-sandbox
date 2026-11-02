@@ -1,0 +1,30 @@
+# MariaDB settings Frappe requires, plus a few that make a dev database
+# pleasant. Committed and generic: nothing here is client-specific, and the
+# port is passed on the command line from config.toml rather than set here.
+
+[mysqld]
+# Frappe will not install on a database that is not utf8mb4. The handshake
+# line is the one people miss: without it the client negotiates latin1 and
+# emoji or accented characters arrive mangled rather than rejected.
+character-set-client-handshake = FALSE
+character-set-server           = utf8mb4
+collation-server               = utf8mb4_unicode_ci
+
+# v12-era Frappe assumes this. Leaving the 10.4 default of
+# STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,... breaks patches that insert
+# zero dates.
+sql_mode = ""
+
+# A development box is not a production server: prefer fast restarts and low
+# memory over durability. A dev database that loses the last second of writes
+# on a hard kill is not a problem; one that takes two minutes to start is.
+innodb_flush_log_at_trx_commit = 2
+innodb_file_per_table          = 1
+
+max_allowed_packet = 256M
+
+[mysql]
+default-character-set = utf8mb4
+
+[client]
+default-character-set = utf8mb4

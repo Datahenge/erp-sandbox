@@ -1,0 +1,94 @@
+# erp-sandbox is an installed application (decision #27).
+#
+# Install it with pipx or uv, never plain pip -- modern Debian marks the system
+# interpreter externally managed (PEP 668) and `pip install` refuses:
+#
+#     pipx install git+https://github.com/Datahenge/erp-sandbox.git
+#     uv tool install git+https://github.com/Datahenge/erp-sandbox.git
+#
+# Dependencies are few and deliberate. The standard library is still the
+# default answer; adding one is a choice to justify.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "erp-sandbox"
+# The version lives in erp_sandbox/__init__.py and is read from there at build
+# time. One number, one home (decision #37).
+#
+# This direction and not the other: __version__ is what `erp-sandbox --version`,
+# `erp-sandbox init`'s min_version stamp and check_min_version all read, and a
+# literal in the module is truthful whatever the install state. Deriving
+# __version__ from importlib.metadata instead would make it whatever was
+# stamped into dist-info at install time -- stale after every edit to an
+# editable install, and a PackageNotFoundError when run from a checkout that
+# was never installed.
+dynamic = ["version"]
+description = "Build a containerized ERPNext development environment from one config.toml"
+readme = "README.md"
+requires-python = ">=3.11"      # tomllib in the standard library (decision #18)
+license = { text = "MIT" }      # LICENSE; copyright Datahenge LLC
+authors = [{ name = "Brian Pond", email = "brian@datahenge.com" }]
+keywords = ["erpnext", "frappe", "podman", "docker", "development"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Datahenge/erp-sandbox"
+Issues = "https://github.com/Datahenge/erp-sandbox/issues"
+
+[project.scripts]
+erp-sandbox = "erp_sandbox.cli:main"
+# The short alias (decision #52): the same entry point, so `sandbox build`
+# and `erp-sandbox build` are the same command.
+sandbox = "erp_sandbox.cli:main"
+
+[tool.setuptools]
+packages = ["erp_sandbox"]
+
+[tool.setuptools.dynamic]
+# setuptools reads the literal by parsing the module, not by importing it, so
+# nothing in __init__.py runs during a build.
+version = { attr = "erp_sandbox.__version__" }
+
+[tool.setuptools.package-data]
+# Templates and static assets ship with the package and are materialized into
+# an environment by `erp-sandbox render`.
+erp_sandbox = [
+    "templates/*.tmpl",
+    "assets/*",
+    "assets/conf/*",
+    "assets/conf/*/*",
+    "assets/images/bench/*",
+    "fixtures/*",
+]
+
+# ruff is a developer-side tool and is deliberately NOT a dependency of this
+# package -- linting must never become a prerequisite of a build. Run it
+# without installing anything:
+#
+#     uvx ruff check erp_sandbox/
+#
+[tool.ruff]
+line-length = 100
+target-version = "py311"        # must track requires-python above
+
+[tool.ruff.lint]
+# UP is off deliberately: this codebase uses .format() throughout, and
+# rewriting ~80 call sites to f-strings would be churn without benefit.
+# I (isort) is off for the same reason -- it found 8 files to reorder and no
+# actual import problem, which is noise that would bury real findings.
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# preflight.py checks the interpreter version and imports tomllib *after* that
+# check, on purpose: an unguarded top-level import would fail with an
+# ImportError instead of the message explaining the floor. E402 is the linter
+# not knowing that, so the code stays and the rule goes.
+# F811: preflight re-exports project's helpers (see the comment at that import)
+# and five functions take a parameter of the same name. The parameter is the
+# intended meaning inside those functions; the module-level name exists only
+# for other modules to import. Real, but not a defect.
+"erp_sandbox/preflight.py" = ["E402", "F811"]

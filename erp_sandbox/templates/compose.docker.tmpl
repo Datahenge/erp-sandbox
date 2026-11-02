@@ -1,0 +1,18 @@
+@@{header}
+#
+# Docker Engine overlay.  Applied on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f compose.docker.yml up -d
+#
+# The daemon is rootful, so a container process simply runs as the uid it is
+# told to.  Running as the detected host uid/gid makes bind-mounted files
+# plainly owned by the developer.  No user namespace remapping is involved,
+# and keep-id would be a syntax error here.
+
+services:
+
+  mariadb:
+    user: "${HOST_UID:?run-erp-sandbox-render-first}:${HOST_GID:?run-erp-sandbox-render-first}"
+
+  bench:
+    user: "${HOST_UID:?run-erp-sandbox-render-first}:${HOST_GID:?run-erp-sandbox-render-first}"@@{bench_debug_ports}

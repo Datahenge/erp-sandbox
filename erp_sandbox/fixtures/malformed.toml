@@ -1,0 +1,4 @@
+# expect: is not valid TOML
+[project]
+name = "acme"
+site = acme.example.com

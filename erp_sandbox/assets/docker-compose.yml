@@ -1,0 +1,135 @@
+# The four services (decision #3). Committed, not generated.
+#
+# Everything variable comes from .env, which erp-sandbox render wrote from
+# config.toml. The `${VAR:?...}` form means a missing value stops the stack with
+# a message naming the variable, rather than starting something subtly wrong --
+# an unset ${PORT_HTTP} would otherwise publish on a random port.
+#
+# This file stays inside the Docker Compose / podman-compose common subset
+# (decision #1). Anything engine-specific lives in the generated overlay:
+#
+#   podman-compose -f docker-compose.yml -f compose.podman.yml up -d
+#   docker compose  -f docker-compose.yml -f compose.docker.yml up -d
+#
+# container_name is set explicitly on purpose. Left to the engines, the same
+# service is <project>_<service>_1 under podman-compose and <project>-<service>-1
+# under docker compose, and bin/bench would need to know which it was talking to.
+
+services:
+
+  mariadb:
+    image: ${MARIADB_IMAGE:?unset-in-.env-run-erp-sandbox-render}
+    container_name: ${PROJECT_NAME:?unset-in-.env-run-erp-sandbox-render}-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?unset-in-.env-run-erp-sandbox-render}
+      TZ: ${TZ:-UTC}
+    # List form, not a folded scalar: podman-compose splits a folded string on
+    # whitespace before it substitutes variables.
+    command:
+      - "--port=${INTERNAL_MARIADB_PORT:?unset-in-.env-run-erp-sandbox-render}"
+    volumes:
+      - ./data/mariadb:/var/lib/mysql
+      - ./conf/mariadb/erpnext.cnf:/etc/mysql/conf.d/erpnext.cnf:ro
+    ports:
+      # Bound to the loopback address, not 0.0.0.0. The reason to publish it at
+      # all is a GUI client on this machine (decision #16); publishing a
+      # password-protected dev database to the local network is not part of
+      # that. (Claude's implementation choice -- see implementation-plan.md.)
+      - "127.0.0.1:${PORT_MARIADB:?unset-in-.env-run-erp-sandbox-render}:${INTERNAL_MARIADB_PORT}"
+    healthcheck:
+      # Decision #26. -h forces TCP: the entrypoint's temporary init server runs
+      # with --skip-networking, so reaching the port at all is proof the real
+      # server is up. No credential -- mysqladmin exits 0 on "Access denied"
+      # anyway, and a healthcheck is visible in `inspect` and runs forever.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "${INTERNAL_MARIADB_PORT}", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      # First-run initialisation is far slower than a restart; measured at ~7s
+      # on a warm machine, and a cold one with a real dataset is slower again.
+      start_period: 90s
+
+  redis:
+    image: ${REDIS_IMAGE:?unset-in-.env-run-erp-sandbox-render}
+    container_name: ${PROJECT_NAME}-redis
+    restart: unless-stopped
+    command:
+      - "redis-server"
+      - "/usr/local/etc/redis/redis.conf"
+      - "--port"
+      - "${INTERNAL_REDIS_PORT:?unset-in-.env-run-erp-sandbox-render}"
+    volumes:
+      - ./conf/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    # Not published (decision #16). One container, three logical databases
+    # (decision #6), and nothing in it is worth keeping.
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "${INTERNAL_REDIS_PORT}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  bench:
+    build:
+      context: ./images/bench
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:?unset-in-.env-run-erp-sandbox-render}
+        PYTHON_VERSION: ${PYTHON_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        NODE_VERSION: ${NODE_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        YARN_VERSION: ${YARN_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        WKHTMLTOPDF_RELEASE: ${WKHTMLTOPDF_RELEASE:?unset-in-.env-run-erp-sandbox-render}
+        BENCH_VERSION: ${BENCH_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        EXTRA_PACKAGES: ${EXTRA_PACKAGES:-}
+        HOST_UID: ${HOST_UID:?unset-in-.env-run-erp-sandbox-render}
+        HOST_GID: ${HOST_GID:?unset-in-.env-run-erp-sandbox-render}
+    image: ${PROJECT_NAME}-bench
+    container_name: ${PROJECT_NAME}-bench
+    # Decision #47, on all four services: back after a reboot without anyone
+    # logging in, while `erp-sandbox down` -- which removes the containers -- still
+    # keeps a stack down. The podman overlay replaces it with `always`, because
+    # podman-restart.service starts only restart-policy=always containers at
+    # boot (podman 5.4.2).
+    restart: unless-stopped
+    environment:
+      # No credential reaches this container. The database password arrives in
+      # bench/sites/*/site_config.json, written by the seeding step, and the PAT
+      # never leaves the host at all (technical.md section 5).
+      INTERNAL_MARIADB_PORT: ${INTERNAL_MARIADB_PORT}
+      INTERNAL_REDIS_PORT: ${INTERNAL_REDIS_PORT}
+      INTERNAL_WEB_PORT: ${INTERNAL_WEB_PORT:?unset-in-.env-run-erp-sandbox-render}
+      INTERNAL_SOCKETIO_PORT: ${INTERNAL_SOCKETIO_PORT:?unset-in-.env-run-erp-sandbox-render}
+      INTERNAL_FILE_WATCHER_PORT: ${INTERNAL_FILE_WATCHER_PORT:?unset-in-.env-run-erp-sandbox-render}
+      SITE_NAME: ${SITE_NAME:?unset-in-.env-run-erp-sandbox-render}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./bench:/workspace/bench
+    # Nothing published: nginx is the single entry point (decision #16).
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: ${NGINX_IMAGE:?unset-in-.env-run-erp-sandbox-render}
+    container_name: ${PROJECT_NAME}-nginx
+    restart: unless-stopped
+    volumes:
+      - ./conf/nginx/site.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./conf/nginx/00-resolver.sh:/docker-entrypoint.d/00-resolver.sh:ro
+      # Read-only: nginx serves built assets straight off the bind mount, so an
+      # asset rebuilt on the host is served without restarting anything.
+      - ./bench:/workspace/bench:ro
+    ports:
+      # [ports].bind, loopback unless config.toml says otherwise (decision
+      # #46). On a VPS, Caddy reaches it there. Docker's iptables rules sit
+      # ahead of ufw, so 0.0.0.0 would be reachable from outside even with the
+      # firewall denying it.
+      - "${BIND_HTTP:?unset-in-.env-run-erp-sandbox-render}:${PORT_HTTP:?unset-in-.env-run-erp-sandbox-render}:80"
+    # Deliberately NOT depends_on bench. nginx has to be able to come up while
+    # the bench is down -- that is most of what a developer does to it -- and a
+    # 502 from a running proxy is a far better diagnostic than a proxy that
+    # refused to start. See conf/nginx/00-resolver.sh for what makes that work.
+    depends_on:
+      - mariadb
