@@ -155,10 +155,13 @@ token    = "env:GIT_PAT"
 Cloning happens on the host, the token reaches `git` through `GIT_ASKPASS` for
 one command, and `.git/config` is checked afterwards to prove none was written.
 
-## 6. Fill in `.erp-sandbox/secrets.env`
+## 6. Fill in the secrets file
+
+It is inside the environment directory, in the `.erp-sandbox/` folder beside
+`config.toml`:
 
 ```sh
-$EDITOR .erp-sandbox/secrets.env
+$EDITOR ~/erp-sandboxes/acme-dev/.erp-sandbox/secrets.env
 ```
 
 - `DB_ROOT_PASSWORD` and `ADMIN_PASSWORD` are required. **Remember

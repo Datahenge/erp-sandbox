@@ -24,7 +24,7 @@ The short version, if you have done this before:
 ```sh
 uv tool install git+https://github.com/Datahenge/erp-sandbox.git
 erp-sandbox init acme-dev && cd ~/erp-sandboxes/acme-dev
-$EDITOR config.toml .erp-sandbox/secrets.env
+$EDITOR config.toml .erp-sandbox/secrets.env   # both inside ~/erp-sandboxes/acme-dev/
 erp-sandbox build
 ```
 

@@ -17,7 +17,8 @@ What the tool does, from the developer's point of view. How it does it is in
 
   3. Configure
      $ $EDITOR config.toml            # repos, refs, versions, two ports
-     $ $EDITOR .erp-sandbox/secrets.env  # passwords, any git token
+     $ $EDITOR .erp-sandbox/secrets.env  # passwords, any git token;
+                                      #   inside the environment, beside config.toml
 
   4. Build
      $ erp-sandbox build                 # unattended; 11 min measured

@@ -443,8 +443,10 @@ def cmd_init(args):
     print()
     print("Next:")
     print("  1. cd {}".format(target))
-    print("  2. edit config.toml            -- repos, refs, ports, versions")
-    print("  3. edit .erp-sandbox/secrets.env  -- passwords and any git token")
+    print("  2. edit {}  -- repos, refs, ports, versions".format(
+        project.config_path(target)))
+    print("  3. edit {}  -- passwords and any git token".format(
+        project.default_secrets_path(target)))
     print("  4. erp-sandbox preflight          -- check the host and the config")
     print("  5. erp-sandbox build              -- everything else")
     return 0

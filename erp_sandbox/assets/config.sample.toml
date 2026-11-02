@@ -195,14 +195,16 @@ blobless             = true       # most of this clone is history you may never 
 # The shell wins, so `export NAME=...` overrides the file for one run.
 # preflight prints which source answered for each secret.
 #
-# Omit this section to use the default, secrets.env, next to config.toml.
-# Set file = "" to use the shell only. The path may be absolute or start with
-# ~, which is how you keep secrets outside the repository entirely.
+# Omit this section to use the default: .erp-sandbox/secrets.env inside this
+# environment, i.e. in the .erp-sandbox/ folder beside this config.toml. A
+# relative path is relative to the directory holding this config.toml. Set
+# file = "" to use the shell only. The path may be absolute or start with ~,
+# which is how you keep secrets outside the environment entirely.
 #
 # It cannot be ".env" -- render.py generates that file for compose and
 # overwrites it on every render.
 # [secrets]
-# file = "secrets.env"
+# file = ".erp-sandbox/secrets.env"
 
 # ─── Database ────────────────────────────────────────────────────────────
 [database]
