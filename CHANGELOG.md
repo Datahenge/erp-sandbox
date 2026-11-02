@@ -9,6 +9,10 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.3.0 — 2026-11-02
+
 ### Added
 - **Frappe/ERPNext v16** (decisions #55–#57). `erp-sandbox init --frappe 16`
   writes a v16 toolchain: `python:3.14-slim-bookworm`, Node 24.13.0,
