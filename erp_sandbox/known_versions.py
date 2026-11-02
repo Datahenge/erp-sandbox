@@ -19,14 +19,30 @@ Adding a version means doing the analysis, not adding a number.
 # Each entry answers: what does this Frappe series need from the machinery that
 # installs it?
 #
-#   python / node       what the base image must provide; config.toml's
-#                       [stack] values are checked against these
-#   legacy_installer    the pip and setuptools this era's *framework* needs.
-#                       v12's requirements predate setuptools 58, which removed
-#                       use_2to3, and several packages still declare it
-#   modern_installer    what a current pyproject-only app needs instead. Both
-#                       are needed in one venv: see the two-phase install in
-#                       build_bench.py
+#   python              the Python the series needs, major.minor. Not a
+#                       config.toml key: the base image decides it, and the
+#                       image build checks that it does (decision #57)
+#   node                the Node major the series needs; [stack].node is
+#                       checked against it
+#   legacy_installer    the pip and setuptools this era's *framework* needs, or
+#                       None. v12's requirements predate setuptools 58, which
+#                       removed use_2to3, and several packages still declare
+#                       it. None means a setup.py app gets the modern installer
+#                       too -- pip<21 cannot even run on v16's Python
+#   modern_installer    what a current pyproject-only app needs. Both are
+#                       needed in one venv for v12: see the two-phase install
+#                       in build_bench.py. Pyproject apps are installed with
+#                       --no-build-isolation, so their build backend must be in
+#                       here too (v16: flit_core)
+#   bench_cli_installer pip and setuptools for the bench CLI's own venv in the
+#                       image, which runs on the same Python
+#   bench_min           the oldest bench CLI this series is known to work with
+#   mariadb_range       (low, high) MariaDB versions frappe supports, or None
+#                       when nobody recorded one. Outside it preflight warns
+#   app_ref             the branch frappe and erpnext use for this series
+#   stack_defaults      what `erp-sandbox init --frappe <series>` writes into
+#                       [stack]. Seeds, like constraints_template: the build
+#                       reads config.toml, never these (decision #56)
 #   system_packages     Debian packages the image needs for this series' own
 #                       requirements to install. Merged with the environment's
 #                       [stack].extra_packages, which covers what its *apps*
@@ -41,6 +57,20 @@ FRAPPE_VERSIONS = {
         "python": "3.9",
         "node": "12",
         "legacy_installer": ("pip<21", "setuptools<58"),
+        "bench_cli_installer": ("pip<21", "setuptools<58"),
+        "bench_min": "5.24.1",
+        "mariadb_range": None,
+        "app_ref": "version-12",
+        "stack_defaults": {
+            "base_image": "docker.io/library/debian:bullseye-slim",
+            "node": "12.22.12",
+            "yarn": "1.22.22",
+            "wkhtmltopdf": "0.12.6.1-2",
+            "bench": "5.24.1",
+            "mariadb_image": "docker.io/library/mariadb:10.4.6",
+            "redis_image": "docker.io/library/redis:6.2-bullseye",
+            "nginx_image": "docker.io/library/nginx:1.24-bullseye",
+        },
         # Capped rather than open-ended: v12 code still reaches for
         # pkg_resources, which newer setuptools has been steadily deprecating.
         # Raise the cap when someone has run a v12 site against a newer one.
@@ -81,7 +111,70 @@ FRAPPE_VERSIONS = {
             "need the modern one. Both appear in the same bench."
         ),
     },
+    16: {
+        "label": "v16",
+        # frappe and erpnext both say requires-python ">=3.14,<3.15" / ">=3.14".
+        # No Debian release ships 3.14, so the base image is the official
+        # python image, which provides it in /usr/local (decision #55).
+        "python": "3.14",
+        # frappe's package.json: "engines": {"node": ">=24"}.
+        "node": "24",
+        # pip<21 cannot run on 3.14, and neither app has a setup.py.
+        "legacy_installer": None,
+        # flit_core because frappe and erpnext both build with it, and
+        # pyproject apps are installed with --no-build-isolation.
+        "modern_installer": ("pip>=24", "setuptools>=70", "flit_core>=3.4,<4"),
+        "bench_cli_installer": ("pip>=24", "setuptools>=70"),
+        # The bench CLI the local v16 bench was built with.
+        "bench_min": "5.29.0",
+        # frappe/database/mariadb/setup_db.py warns below 10.6 and above 11.8.
+        "mariadb_range": ("10.6", "11.8"),
+        "app_ref": "version-16",
+        # mysqlclient has no Linux wheel and builds from source; its own README
+        # names default-libmysqlclient-dev (plus pkg-config and a compiler, both
+        # in the image) for Debian. WeasyPrint needs Pango and HarfBuzz at run
+        # time. Package names are bookworm's.
+        "system_packages": (
+            "default-libmysqlclient-dev",
+            "libpango-1.0-0", "libpangoft2-1.0-0", "libharfbuzz-subset0",
+        ),
+        # Nothing known to need capping yet. A seed, so an environment can add
+        # its own.
+        "constraints_template": (),
+        "stack_defaults": {
+            # bookworm, not trixie: wkhtmltopdf's patched-qt .deb exists for
+            # bookworm and not for trixie (decision #55).
+            "base_image": "docker.io/library/python:3.14-slim-bookworm",
+            "node": "24.13.0",
+            "yarn": "1.22.22",
+            "wkhtmltopdf": "0.12.6.1-3",
+            "bench": "5.29.0",
+            "mariadb_image": "docker.io/library/mariadb:11.8",
+            "redis_image": "docker.io/library/redis:7.4-bookworm",
+            "nginx_image": "docker.io/library/nginx:1.28-bookworm",
+        },
+        # Read from a local v16 bench (frappe 16.20.0, 2026-06-02), not yet
+        # built by this tool. Fill in from the first real build.
+        "verified": "",
+        "notes": (
+            "Python 3.14 from the official python image, not Debian. Both "
+            "framework and ERPNext are flit_core pyproject builds; no legacy "
+            "installer."
+        ),
+    },
 }
+
+# wkhtmltopdf/packaging releases, and the Debian releases each ships a patched-qt
+# .deb for. The Dockerfile builds the download name from the base image's own
+# codename, so a release missing its codename fails the build at the download.
+# Checked 2026-11-02 against the project's GitHub releases; 0.12.6.1-3
+# (2023-05-22) is the last one published.
+WKHTMLTOPDF_DEBS = {
+    "0.12.6.1-2": ("bullseye",),
+    "0.12.6.1-3": ("bullseye", "bookworm"),
+}
+
+DEBIAN_CODENAMES = ("bullseye", "bookworm", "trixie")
 
 SUPPORTED = tuple(sorted(FRAPPE_VERSIONS))
 
@@ -109,6 +202,14 @@ def unsupported_message(version):
         "(decision #28). Adding a version means doing that analysis."
         .format(version, supported_list())
     )
+
+
+def installer_pins(entry):
+    """(legacy, modern, bench_cli) as space-joined strings; legacy may be ''."""
+    legacy = entry["legacy_installer"]
+    return (" ".join(legacy) if legacy else "",
+            " ".join(entry["modern_installer"]),
+            " ".join(entry["bench_cli_installer"]))
 
 
 def constraints_template(version):

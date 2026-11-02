@@ -3,7 +3,8 @@
 # The only file you edit. Everything else is generated from it by
 # `erp-sandbox render`, and generated files are overwritten on every render.
 #
-#   erp-sandbox init acme-dev && cd acme-dev
+#   erp-sandbox init acme-dev              # or: init --frappe 16 acme-dev
+#   cd ~/erp-sandboxes/acme-dev
 #   $EDITOR config.toml
 #   erp-sandbox build
 #
@@ -17,8 +18,9 @@ site     = "site_acme1"          # Frappe site name; becomes bench/sites/<name>
 timezone = "America/Los_Angeles"
 
 # ─── Host-published ports ────────────────────────────────────────────────
-# Only these two reach the host. Change them if something already listens;
-# preflight checks both before the build does any work.
+# Only these two reach the host -- three with [debug] enabled. Change them if
+# something already listens; preflight checks them before the build does any
+# work.
 [ports]
 http    = 8101                   # nginx: the URL you open in a browser
 mariadb = 3316                   # for DBeaver / DataGrip / the mysql client
@@ -40,19 +42,27 @@ mariadb      = 3306
 redis        = 6379
 
 # ─── The stack ───────────────────────────────────────────────────────────
-# These pin the toolchain. The defaults below are correct for ERPNext v12.
-# A v13/v14 environment changes them.
+# These pin the toolchain for one Frappe series. `erp-sandbox init` wrote a
+# set that builds; `erp-sandbox init --frappe 16` writes v16's. Change one value
+# at a time, and let preflight say what no longer fits.
+#
+# There is no python key: the base image decides it, and the image build checks
+# it is the one the series needs (erp_sandbox/known_versions.py).
 [stack]
 frappe_version = 12               # which Frappe series; must be one this
                                   # tool knows how to build (decision #28)
-base_image    = "docker.io/library/debian:bullseye-slim"  # bullseye = python 3.9
-python        = "3.9"
-node          = "12.22.12"
-yarn          = "1.22.22"           # yarn 1.x; v12 asset builds predate berry
-wkhtmltopdf   = "0.12.6.1-2"     # packaging release, NOT the wkhtmltopdf version;
-                                 #   must be a patched-qt build, and the release
-                                 #   that ships a bullseye .deb is 0.12.6.1-2
-bench         = "5.24.1"
+base_image    = "docker.io/library/debian:bullseye-slim"
+                                  # its Debian release (in the tag) decides
+                                  #   which wkhtmltopdf .deb the image installs
+node          = "12.22.12"        # exact release from nodejs.org; the major
+                                  #   must be the series' (preflight checks)
+yarn          = "1.22.22"         # yarn 1.x
+wkhtmltopdf   = "0.12.6.1-2"     # packaging release, NOT the wkhtmltopdf version.
+                                 #   Must ship a patched-qt .deb for the base
+                                 #   image's Debian release: 0.12.6.1-2 has
+                                 #   bullseye only, 0.12.6.1-3 adds bookworm,
+                                 #   nothing has trixie. preflight checks
+bench         = "5.24.1"         # the bench CLI
 mariadb_image = "docker.io/library/mariadb:10.4.6"
 redis_image   = "docker.io/library/redis:6.2-bullseye"
 nginx_image   = "docker.io/library/nginx:1.24-bullseye"
@@ -121,9 +131,9 @@ min_version = "0.1.0"
 #           erpnext, the two clones that cost the disk. true clones with
 #           --filter=blob:none: every commit and branch arrives, but the
 #           contents of files at old commits are fetched only when a command
-#           asks for one. Measured on 2026-08-23, frappe and erpnext at
-#           version-12 carry 1.4 GiB of objects between them and about 70 MiB
-#           of that is commits, trees and the current files.
+#           asks for one. Measured on 2026-08-23 at version-12: frappe has
+#           429 MiB of objects, 47 MiB of them commits and trees; erpnext has
+#           999 MiB, 59 MiB of them commits and trees (decision #31).
 #           The price is that `git log -p`, `git blame` on an old file, and
 #           `git bisect` need the network, and are slower the first time. Leave
 #           it false for an app you dig through history in; it is refused
@@ -271,5 +281,6 @@ port    = 5678
 # ─── Frappe runtime settings → common_site_config.json ───────────────────
 [frappe]
 developer_mode     = 1
-background_workers = 1           # worker processes per queue (short/long/default)
-gunicorn_workers   = 2
+background_workers = 1           # worker processes per queue (short/long/
+                                 #   default) in erp-sandbox's Procfile, which
+                                 #   is the same for every series

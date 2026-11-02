@@ -238,10 +238,30 @@ requires_credentials = true''',
         ["stack.frappe_version must be an integer"],
     ),
     (
-        "a stack python that contradicts the version registry",
-        'python        = "3.9"',
-        'python        = "3.11"',
-        ["but Frappe v12 needs 3.9", "One of the two is wrong"],
+        # Decision #57: the base image decides the Python.
+        "a leftover stack.python",
+        'node          = "12.22.12"',
+        'python        = "3.9"\nnode          = "12.22.12"',
+        ["stack.python was removed", "Delete the line"],
+    ),
+    (
+        "a stack node that contradicts the version registry",
+        'node          = "12.22.12"',
+        'node          = "24.13.0"',
+        ["but Frappe v12 needs Node 12", "One of the two is wrong"],
+    ),
+    (
+        # R1: the Dockerfile asks for wkhtmltox_<release>.<codename>_<arch>.deb.
+        "a wkhtmltopdf release with no .deb for the base image's Debian",
+        'base_image    = "docker.io/library/debian:bullseye-slim"',
+        'base_image    = "docker.io/library/debian:bookworm-slim"',
+        ["'0.12.6.1-2' has no .deb for bookworm", "Use '0.12.6.1-3'"],
+    ),
+    (
+        "a bench CLI older than the series has been verified with",
+        'bench         = "5.24.1"',
+        'bench         = "5.20.0"',
+        ["stack.bench = '5.20.0' is older than 5.24.1"],
     ),
     (
         "an extra_packages entry that is not a package name",
@@ -1446,6 +1466,124 @@ def run_vps_cases(results, workdir):
                          "exit {}".format(code))
 
 
+def run_series_cases(results, workdir):
+    """
+    Decisions #55-#57: a second Frappe series, and what init writes for it.
+
+    Nothing here builds an image -- that is the acceptance run. What is
+    checked is that v16's config is coherent, renders what the image build
+    reads, and that the pairings the build would otherwise find minutes in are
+    caught first.
+    """
+    from erp_sandbox import cli, known_versions, preflight
+
+    sample = SAMPLE.read_text(encoding="utf-8")
+    v16_text = cli.seed_series(sample, 16)
+
+    def load(text, name):
+        return load_config(write_config(workdir, text, name=name))
+
+    def outputs(cfg):
+        return render.build_outputs(cfg, {"database.root_password": "x",
+                                          "site.admin_password": "y"}, 1000, 1000)
+
+    try:
+        v16 = load(v16_text, "series-16.toml")
+    except ConfigError as exc:
+        results.fail("init --frappe 16 writes a config that validates", exc.problems)
+        return
+    results.ok("init --frappe 16 writes a config that validates")
+
+    # Through init itself: the constraint seed is written after seed_series.
+    made = Path(workdir) / "series-init-16"
+    with contextlib.redirect_stdout(io.StringIO()):
+        cli.main(["init", "--frappe", "16", str(made)])
+    initialised = load_config(project.config_path(made))
+    stack = initialised["stack"]
+    want = dict(known_versions.get(16)["stack_defaults"], frappe_version=16)
+    wrong = {k: stack.get(k) for k, v in want.items() if stack.get(k) != v}
+    refs = {a["name"]: a["ref"] for a in initialised["apps"]}
+    if not wrong and refs == {"frappe": "version-16", "erpnext": "version-16"} \
+            and stack["pip_constraints"] == []:
+        results.ok("init --frappe 16 writes every v16 pin, the version-16 refs, "
+                   "and v16's empty constraint seed")
+    else:
+        results.fail("init --frappe 16 writes every v16 pin, the version-16 refs, "
+                     "and v16's empty constraint seed", {"stack": wrong, "refs": refs})
+
+    if cli.seed_series(sample, 12) == sample:
+        results.ok("init's default series leaves the v12 sample exactly as it is")
+    else:
+        results.fail("init's default series leaves the v12 sample exactly as it is",
+                     "seeding v12 changed the sample")
+
+    env16 = outputs(v16)[".env"][0]
+    env12 = outputs(load(sample, "series-12.toml"))[".env"][0]
+    if "PYTHON_VERSION=3.14" in env16 and "pip<21" not in env16 \
+            and "PYTHON_VERSION=3.9" in env12 and "BENCH_CLI_PINS=pip<21" in env12:
+        results.ok("the image gets its Python and bench-CLI installer from the series")
+    else:
+        results.fail("the image gets its Python and bench-CLI installer from the series",
+                     [ln for ln in env16.splitlines() if ln.startswith(("PYTHON", "BENCH_CLI"))])
+
+    legacy, modern, _cli = known_versions.installer_pins(known_versions.get(16))
+    if legacy == "" and "flit_core" in modern:
+        results.ok("v16 has no legacy installer, and its modern one carries flit_core",
+                   "pyproject apps install with --no-build-isolation")
+    else:
+        results.fail("v16 has no legacy installer, and its modern one carries flit_core",
+                     (legacy, modern))
+
+    if preflight.series_warnings(v16) == [] \
+            and preflight.series_warnings(load(sample, "series-12b.toml")) == []:
+        results.ok("both series' own defaults draw no series warning")
+    else:
+        results.fail("both series' own defaults draw no series warning",
+                     preflight.series_warnings(v16))
+
+    stale = load(v16_text.replace('ref                  = "version-16"',
+                                  'ref                  = "version-12"', 1)
+                         .replace("mariadb:11.8", "mariadb:10.4.6"), "series-stale.toml")
+    warnings = preflight.series_warnings(stale)
+    if any("apps.frappe.ref = 'version-12'" in w for w in warnings) \
+            and any("MariaDB 10.4.6 but Frappe v16 supports 10.6 to 11.8" in w for w in warnings):
+        results.ok("a v12 ref and a MariaDB outside v16's range are both warned about")
+    else:
+        results.fail("a v12 ref and a MariaDB outside v16's range are both warned about",
+                     warnings)
+
+    # R6: mariadb and redis run in containers of their own.
+    try:
+        load(sample.replace("mariadb      = 3306", "mariadb      = 8000"), "series-ports.toml")
+    except ConfigError as exc:
+        results.fail("an internal mariadb port equal to web's is not a collision", exc.problems)
+    else:
+        results.ok("an internal mariadb port equal to web's is not a collision")
+
+    # R5: accepted, and nothing reads it.
+    legacy_cfg = load(sample.replace("[frappe]\n", "[frappe]\ngunicorn_workers   = 2\n", 1),
+                      "series-gunicorn.toml")
+    site_config = outputs(legacy_cfg)["bench/sites/common_site_config.json"][0]
+    if "gunicorn_workers" not in site_config:
+        results.ok("gunicorn_workers is accepted and no longer rendered")
+    else:
+        results.fail("gunicorn_workers is accepted and no longer rendered", site_config)
+
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        try:
+            cli.main(["init", "--frappe", "99", str(Path(workdir) / "series-99")])
+            code = 0
+        except SystemExit as exc:
+            code = exc.code
+    if code != 0 and "frappe_version = 99" in stderr.getvalue() \
+            and not (Path(workdir) / "series-99").exists():
+        results.ok("init --frappe refuses an unanalysed series before writing anything")
+    else:
+        results.fail("init --frappe refuses an unanalysed series before writing anything",
+                     stderr.getvalue().strip())
+
+
 def run_rename_cases(results, workdir):
     """
     Decision #52: the rename is a clean break, and the break explains itself.
@@ -2115,6 +2253,9 @@ def main():
         print("\nshared VPS")
         run_vps_cases(results, workdir)
         run_rename_cases(results, workdir)
+
+        print("\nfrappe series")
+        run_series_cases(results, workdir)
 
         print("\nfetch_apps")
         run_fetch_cases(results, workdir)

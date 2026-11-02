@@ -604,24 +604,69 @@ throw away and rebuild.
 
 `images/bench/Dockerfile`, every version supplied as a build arg from `.env`:
 
-- system Python + `python3-dev`, build toolchain, `libmariadb-dev`
+- Python — the base image's own when it is the series' version, otherwise
+  Debian's `python3` + `python3-dev` (below)
+- build toolchain and `pkg-config`
 - Node from the official tarball, installed so `/usr/local/bin/node` exists —
   the Procfile's socketio line hardcodes that path
-- Yarn, era-appropriate
-- wkhtmltopdf patched-qt, plus fonts
+- Yarn 1.x
+- wkhtmltopdf patched-qt, plus fonts. The `.deb` is chosen by the base image's
+  Debian codename, so `[stack].wkhtmltopdf` must name a release that ships one
+  for it — preflight refuses a known-impossible pair (decision #57)
 - `mariadb-client` (for restores), `redis-tools` (for debugging)
 - a non-root user matching the detected host uid/gid
-- `bench` pinned, in its own venv
+- `bench` pinned, in its own venv, installed with the series'
+  `bench_cli_installer` (`pip<21` for v12, which cannot run on v16's 3.14)
 
 **`bench/env` is bind-mounted, not a named volume** (decision #22). It comes
 along with the `./bench` mount rather than needing one of its own. Two
 consequences worth stating: the venv is built *inside* the container, so
-`bench/env/bin/` holds a Python 3.9 interpreter and shebangs from the base
-image, none of which will execute on a modern host — `doctor` warns about this
+`bench/env/bin/` holds the image's interpreter (3.9 for v12, 3.14 for v16) and
+shebangs from the base image, none of which will execute on a modern host — `doctor` warns about this
 and [using.md](using.md) says not to activate the venv from the host. And the host can
 read the installed third-party sources directly, which is the point.
 
 `entrypoint.sh` waits for MariaDB and Redis to answer, then `exec honcho start`.
+
+### Python comes from the image, and the series says which
+
+`config.toml` has no `python` key (decision #57). The series entry in
+`known_versions.py` names the Python, render writes it to `.env` as
+`PYTHON_VERSION`, and the image build:
+
+1. uses the base image's `python3` when it already is that version — the
+   official `python:3.14-slim-bookworm` (v16) carries 3.14 in `/usr/local`;
+2. otherwise installs Debian's `python3` — `debian:bullseye-slim` (v12) gets
+   3.9 this way;
+3. fails with the version it found if the result is still not the series'.
+
+No Debian release ships 3.14, which is why v16's base image is the official
+python image rather than plain Debian (decision #55). It is **bookworm** and not
+trixie because wkhtmltopdf/packaging's last release, `0.12.6.1-3` (2023),
+ships `.deb`s for bullseye and bookworm only.
+
+### What preflight checks against the series
+
+Refused, because the build would fail minutes in (decision #57):
+
+- `node`'s major is not the series'.
+- `bench` is older than the series' `bench_min`.
+- `wkhtmltopdf` names a release with no `.deb` for the Debian codename in the
+  `base_image` tag (`WKHTMLTOPDF_DEBS`).
+- `python` is present at all.
+
+Warned about by preflight and `doctor`, because frappe itself only warns or a
+fork may be deliberate:
+
+- frappe or erpnext has a `version-N` ref with N ≠ `frappe_version`.
+- `mariadb_image`'s version is outside the series' `mariadb_range`
+  (v16: 10.6–11.8, from frappe's own `setup_db.py`).
+
+`[internal_ports]` collisions are checked only among `web`, `socketio` and
+`file_watcher`, the three that share the bench container; `mariadb` and `redis`
+listen in containers of their own. `[frappe].gunicorn_workers` is accepted and
+ignored: `bench serve` is werkzeug, and only bench's production supervisor
+config reads it.
 
 ### Two installers in one venv
 
@@ -630,16 +675,22 @@ removed `use_2to3`; they need `pip<21`, `setuptools<58`. A client app written an
 time recently is pyproject-only, and an editable install of one needs PEP 660,
 which arrived in pip 21.3. Both kinds live in the same bench.
 
-`build_bench.py` therefore switches installers mid-run, in `config.toml` order,
-at the boundary where the first pyproject-only app appears. The versions come
-from `known_versions.py` (decision #28), not from the script — they are a
+That is v12. `build_bench.py` switches installers mid-run, in `config.toml`
+order, at the boundary where the first pyproject-only app appears. The versions
+come from `known_versions.py` (decision #28), not from the script — they are a
 property of the Frappe series. A `setup.py` app listed *after* a pyproject one
 is refused rather than silently downgrading the installer.
+
+**v16 has no legacy installer**: `pip<21` cannot run on Python 3.14, and frappe
+and erpnext are both `flit_core` pyproject builds. A `setup.py` app on v16 is
+installed by the modern pip, with build isolation left on, since it declares no
+backend to find in the venv.
 
 Pyproject apps are installed `--no-build-isolation`. They commonly declare
 `frappe` among their build requirements, and an isolated build would fetch a
 package of that name from PyPI instead of using the bench's own editable
-install. Everything the build needs is already in the venv.
+install. Everything the build needs must therefore already be in the venv,
+build backend included: v16's modern installer carries `flit_core`.
 
 **Apps can need system libraries**, and the image cannot guess which — an app
 wrapping a system service needs that service's `-dev` package to build its

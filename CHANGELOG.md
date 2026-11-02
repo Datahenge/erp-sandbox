@@ -9,7 +9,23 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+### Added
+- **Frappe/ERPNext v16** (decisions #55–#57). `erp-sandbox init --frappe 16`
+  writes a v16 toolchain: `python:3.14-slim-bookworm`, Node 24.13.0,
+  wkhtmltopdf `0.12.6.1-3`, bench 5.29.0, MariaDB 11.8. **Not yet built
+  end to end** — see `docs/testing.md`.
+- **Preflight checks the toolchain against the series**: Node major, bench
+  minimum, and whether the wkhtmltopdf release ships a `.deb` for the base
+  image's Debian release. It warns when frappe/erpnext refs or the MariaDB
+  version do not match the series.
+
 ### Changed
+- **`[stack].python` is gone** (#57). The base image decides it; a config that
+  still has the line is refused with the fix named — delete it.
+- **`[frappe].gunicorn_workers` is no longer rendered.** Nothing in a
+  development bench reads it; an existing config may keep it.
+- **`[internal_ports].mariadb` and `.redis` no longer count as collisions**
+  with the bench's ports: they listen in containers of their own.
 - **On a shared VPS, the admin installs erp-sandbox once for every user**
   with `sudo pipx install --global` (decision #54). `docs/vps.md` has the step;
   laptops still install per-user.

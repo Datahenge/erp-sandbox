@@ -21,6 +21,7 @@ ARG NODE_VERSION
 ARG YARN_VERSION
 ARG WKHTMLTOPDF_RELEASE
 ARG BENCH_VERSION
+ARG BENCH_CLI_PINS
 ARG EXTRA_PACKAGES=""
 ARG HOST_UID
 ARG HOST_GID
@@ -68,12 +69,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # deciding per version -- the cost of guessing wrong is a build that fails
 # twenty-five minutes in with an error about PostgreSQL.
 #
-# Deliberately absent, and worth recording so nobody adds them back on a hunch:
-# frappe v12 pins ldap3 (pure Python, so no libldap2-dev/libsasl2-dev) and
-# PyMySQL (pure Python, so no libmariadb-dev). No app in the config asks for
-# mysqlclient. Those are guesses about *apps*, which is an unbounded set and
-# where a general-purpose Frappe image has to carry everything; psycopg2 is a
-# property of the framework, which is not.
+# Deliberately absent here, and worth recording so nobody adds them back on a
+# hunch: frappe v12 pins ldap3 (pure Python, so no libldap2-dev/libsasl2-dev)
+# and PyMySQL (pure Python, so no MySQL client headers). v16 does need them
+# (it pins mysqlclient) and Pango for WeasyPrint, which is why those arrive
+# through EXTRA_PACKAGES from the series entry in known_versions.py rather than
+# from this list. What a *series* needs goes there; what an *app* needs goes in
+# [stack].extra_packages.
+#
+# Python itself is installed from Debian only when the base image does not
+# already provide the series' version. The official python images (v16's
+# python:3.14-slim-bookworm) carry it in /usr/local; Debian's python3 would add
+# a second, older interpreter beside it.
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     apt-get update; \
@@ -81,8 +88,14 @@ RUN set -eux; \
         ca-certificates curl wget git xz-utils procps \
         passwd adduser locales mime-support \
     ; \
+    if command -v python3 >/dev/null \
+        && [ "$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "${PYTHON_VERSION}" ]; then \
+        echo "base image provides python ${PYTHON_VERSION} at $(command -v python3); not installing Debian's"; \
+    else \
+        apt-get install -y --no-install-recommends \
+            python3 python3-dev python3-venv python3-pip python3-setuptools; \
+    fi; \
     apt-get install -y --no-install-recommends \
-        python3 python3-dev python3-venv python3-pip python3-setuptools \
         build-essential pkg-config \
     ; \
     apt-get install -y --no-install-recommends \
@@ -106,23 +119,25 @@ RUN set -eux; \
     locale-gen en_US.UTF-8
 
 # The base image is a TOML value, so nothing guarantees its Python is the one
-# config.toml claims. Failing here is far cheaper than failing during a v12
-# dependency install forty minutes later.
+# the Frappe series needs. PYTHON_VERSION comes from the series entry in
+# known_versions.py, not from config.toml (decision #57). Failing here is far
+# cheaper than failing during a dependency install forty minutes later.
 RUN set -eux; \
     actual="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"; \
     if [ "$actual" != "${PYTHON_VERSION}" ]; then \
-        echo "FATAL: base image has Python ${actual}, config.toml says ${PYTHON_VERSION}." >&2; \
-        echo "Either [stack].python or [stack].base_image is wrong; they must agree." >&2; \
+        echo "FATAL: python3 is ${actual}, but this Frappe series needs ${PYTHON_VERSION}." >&2; \
+        echo "[stack].base_image provides the wrong Python. Use an image that has" >&2; \
+        echo "${PYTHON_VERSION} -- erp-sandbox init --frappe <series> writes one that does." >&2; \
         exit 1; \
     fi; \
-    echo "python ${actual} matches config.toml"
+    echo "python ${actual} is what the series needs"
 
 # ---------------------------------------------------------------------------
 # Node, from the official tarball
 #
-# Not from apt: bullseye ships a Node far newer than v12 needs, and the
-# Procfile's socketio line names /usr/local/bin/node explicitly, so the binary
-# has to land exactly there.
+# Not from apt: Debian's Node is whatever its release ships, not the series'
+# version, and the Procfile's socketio line names /usr/local/bin/node
+# explicitly, so the binary has to land exactly there.
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -164,7 +179,9 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     python3 -m venv "${BENCH_CLI}"; \
-    "${BENCH_CLI}/bin/pip" install --no-cache-dir --upgrade "pip<21" "setuptools<58" wheel; \
+    # BENCH_CLI_PINS is the series' bench_cli_installer: pip<21 for v12, which
+    # cannot run on v16's Python 3.14. Unquoted on purpose: one word per pin.
+    "${BENCH_CLI}/bin/pip" install --no-cache-dir --upgrade ${BENCH_CLI_PINS:?} wheel; \
     "${BENCH_CLI}/bin/pip" install --no-cache-dir "frappe-bench==${BENCH_VERSION}"; \
     "${BENCH_CLI}/bin/pip" install --no-cache-dir honcho; \
     ln -sf "${BENCH_CLI}/bin/bench" /usr/local/bin/bench; \

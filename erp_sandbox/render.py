@@ -268,6 +268,12 @@ def build_outputs(cfg, secrets, uid, gid):
     # reaches a generated file.
     _enabled, _target, debug_port = debug_settings(cfg)
 
+    # The series decides the Python and the bench CLI's installer; config.toml
+    # names the series (decision #57). Validation has already refused a series
+    # the registry does not know.
+    series = known_versions.get(stack["frappe_version"])
+    _legacy, _modern, bench_cli_pins = known_versions.installer_pins(series)
+
     outputs = {}
 
     # --- .env --------------------------------------------------------------
@@ -288,7 +294,8 @@ def build_outputs(cfg, secrets, uid, gid):
             "internal_mariadb": internal["mariadb"],
             "internal_redis": internal["redis"],
             "base_image": stack["base_image"],
-            "python_version": stack["python"],
+            "python_version": series["python"],
+            "bench_cli_pins": bench_cli_pins,
             "node_version": stack["node"],
             "yarn_version": stack["yarn"],
             "extra_packages": " ".join(all_extra_packages(stack)),
@@ -349,7 +356,6 @@ def build_outputs(cfg, secrets, uid, gid):
             "host_name_entry": host_name_entry(public_url(cfg)),
             "developer_mode": json.dumps(frappe["developer_mode"]),
             "background_workers": json.dumps(frappe["background_workers"]),
-            "gunicorn_workers": json.dumps(frappe["gunicorn_workers"]),
         }),
         None,
     )
@@ -402,7 +408,7 @@ def build_outputs(cfg, secrets, uid, gid):
         render_template("code_workspace.tmpl", {
             "header": comment_header("//"),
             "project_name": project["name"],
-            "extra_paths": analysis_paths(apps, stack["python"]),
+            "extra_paths": analysis_paths(apps, series["python"]),
             "launch_block": launch_block(
                 project["name"], project["site"], debug_port),
         }),

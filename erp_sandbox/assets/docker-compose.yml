@@ -76,6 +76,7 @@ services:
       args:
         BASE_IMAGE: ${BASE_IMAGE:?unset-in-.env-run-erp-sandbox-render}
         PYTHON_VERSION: ${PYTHON_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        BENCH_CLI_PINS: ${BENCH_CLI_PINS:?unset-in-.env-run-erp-sandbox-render}
         NODE_VERSION: ${NODE_VERSION:?unset-in-.env-run-erp-sandbox-render}
         YARN_VERSION: ${YARN_VERSION:?unset-in-.env-run-erp-sandbox-render}
         WKHTMLTOPDF_RELEASE: ${WKHTMLTOPDF_RELEASE:?unset-in-.env-run-erp-sandbox-render}

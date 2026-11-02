@@ -20,6 +20,7 @@ when it passes** — run it rather than trusting a number written here.
 | CLI | every verb parses, every verb is wired to a handler, `bench` runs inside the named container, the engine overlay is applied on top of the base, and the environment is found from a nested directory. `mariadb` gets four of its own: a query reaches the client, the password travels by environment rather than argv, the pager is applied only to a human session, and a site with no `db_name` is refused |
 | Guard | the edit guard (decision #35): the settings file is **strict JSON** — parsed with `json.loads`, not the JSONC reader, so adding the usual header is caught — the hook matches `Edit|Write`, and its command is an absolute path rather than a bare `erp-sandbox` that a missing PATH entry would make inert. Then the decisions: refuses each generated path, allows `config.toml`, `CLAUDE.md`, app source and a developer's own file under `conf/`, and **allows everything on every error path** — junk on stdin, a payload with no `file_path`, a file in no environment, and a `config.toml` that does not parse. One case asserts the generated list is derived with no secret in the environment |
 | Shared VPS | decisions #40–#51: http is published on `127.0.0.1` by default and a `0.0.0.0` bind is still probed on loopback; every service carries the restart policy; `public_url` becomes `host_name` only when set, with valid JSON either way; nginx builds `Origin` and `X-Forwarded-Proto` from the proxy's header; `proxy-snippet` prints nothing without a `public_url` and the loopback upstream with one; the registry passes an owner, refuses another user and an unlisted user, is silent when absent, and is itself refused when one port has two owners; rootless Docker is refused; `init` puts a bare name under `~/erp-sandboxes/`, refuses a non-empty directory without writing into it, and accepts one with `--here` |
+| Frappe series | decisions #55–#57: `init --frappe 16` writes a config that validates, with every v16 pin, the `version-16` refs and v16's empty constraint seed; the default series leaves the v12 sample untouched; the image's Python and bench-CLI installer come from the series; v16 has no legacy installer and its modern one carries `flit_core`; each series' own defaults draw no warning, while a v12 ref or an out-of-range MariaDB under v16 does; a leftover `python`, a Node from another series, an impossible wkhtmltopdf/Debian pair and a too-old bench are refused; `init --frappe` refuses an unanalysed series before writing anything |
 | Layout | every relative path the compose file names — the bench build context included — was actually materialized into the environment |
 | Hygiene | `.env` is written `0600` and carries no git credential; no fixture holds an unexplained placeholder; `requires-python` in `pyproject.toml` and `MIN_PYTHON` in `preflight.py` agree |
 | Guards | `preflight` still re-exports the names other modules import from it — `ruff --fix` deleted that block once and every other case still passed; and, in a source checkout, `core.hooksPath` points at `tools/` so the pre-commit hook actually runs |
@@ -66,6 +67,22 @@ The environment is done when all of these pass.
 
 Items 10 and 14 are the most likely to fail first; item 8 is the most likely to
 fail during the image build.
+
+### Frappe v16 (decisions #55–#57)
+
+**None verified yet.** `selftest` covers the configuration; only a real build
+covers the image.
+
+| # | Check | Notes |
+|---|---|---|
+| 26 | `erp-sandbox init --frappe 16` then `erp-sandbox build` completes unattended | not run. First risks: `libharfbuzz-subset0` and `default-libmysqlclient-dev` names on bookworm, mysqlclient's source build, `flit_core` under `--no-build-isolation` |
+| 27 | The image uses the base image's Python 3.14, not Debian's | not run. The build log says "base image provides python 3.14" |
+| 28 | Site loads, login works, realtime works (item 6's checks) | not run |
+| 29 | A print format renders to PDF through wkhtmltopdf `0.12.6.1-3` | not run |
+| 30 | `erp-sandbox doctor` is clean, including the image-label check against the series' Python | not run |
+| 31 | An existing v12 environment rebuilds after this work | not run. Re-rendering changes it: `.env` gains `BENCH_CLI_PINS`, `gunicorn_workers` leaves `common_site_config.json`, and the Dockerfile changed, so the image step rebuilds. A `python` line in its `config.toml` must be deleted first |
+
+When 26–30 pass, fill in `verified` in v16's `known_versions.py` entry.
 
 ### Shared VPS (decisions #40–#51)
 

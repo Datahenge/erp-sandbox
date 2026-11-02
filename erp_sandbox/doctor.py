@@ -40,6 +40,7 @@ from erp_sandbox.preflight import (
     load_config,
     pip_constraints,
     resolve_all_secrets,
+    series_warnings,
 )
 
 HEALTHY, DEGRADED, BROKEN = 0, 1, 2
@@ -163,6 +164,8 @@ def check_config(doc, root, config_path):
 
     known = known_versions.get(cfg["stack"]["frappe_version"])
     doc.ok("Config", "frappe series", "{} (erp_sandbox/known_versions.py)".format(known["label"]))
+    for warning in series_warnings(cfg):
+        doc.warn("Config", "frappe series", warning, "fix config.toml")
 
     # Decision #36. An environment whose constraints differ from the series
     # template is a legitimate state, not a fault -- a fork with modernised pins
@@ -342,7 +345,7 @@ def check_images(doc, engine, cfg, root):
             got = {}
         stack = cfg["stack"]
         expected = {
-            "erp-sandbox.python": stack["python"],
+            "erp-sandbox.python": known_versions.get(stack["frappe_version"])["python"],
             "erp-sandbox.node": stack["node"],
             "erp-sandbox.yarn": stack["yarn"],
             "erp-sandbox.wkhtmltopdf": stack["wkhtmltopdf"],

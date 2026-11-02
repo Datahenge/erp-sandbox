@@ -65,9 +65,16 @@ pipx install git+https://github.com/Datahenge/erp-sandbox.git
 ## 3. Create the environment — instant
 
 ```sh
-erp-sandbox init acme-dev
+erp-sandbox init acme-dev                 # ERPNext v12, the default
+erp-sandbox init --frappe 16 acme-dev     # or ERPNext v16
 cd ~/erp-sandboxes/acme-dev
 ```
+
+- **Choose the Frappe series here.** `--frappe` writes that series' whole
+  toolchain into `config.toml` — base image, Node, wkhtmltopdf, bench, MariaDB,
+  and the frappe/erpnext branches. Supported: 12 and 16.
+- **Do not turn a v12 config into v16 by editing it.** The values depend on
+  each other; `init --frappe 16` writes a set that fits.
 
 - **A bare name goes under `~/erp-sandboxes/`** (#51). Give a path —
   `./acme-dev`, `/srv/acme-dev` — to put it elsewhere.
@@ -117,10 +124,10 @@ Three things to know:
 
 - **Both ports must be free**, and each environment needs its own pair. See
   [Running more than one environment](using.md#running-more-than-one-environment).
-- **`frappe_version` must be one the tool knows.** Supporting a series means
-  reading its own `requirements.txt`; that analysis is recorded in
-  `erp_sandbox/known_versions.py`. An unknown version is refused rather than
-  attempted on guesswork.
+- **`frappe_version` must be one the tool knows** — 12 or 16. An unknown
+  version is refused rather than attempted on guesswork.
+- **There is no `python` key.** The base image decides it, and the build checks
+  it is the one the series needs.
 - **frappe and erpnext are cloned `blobless`**: full history, old file
   contents fetched on demand. Remove the line for a full clone — detail in
   [technical.md](technical.md) §3.

@@ -114,9 +114,18 @@ for app in "$@"; do
         echo "FATAL: apps/$app is missing. Run `erp-sandbox fetch` on the host." >&2
         exit 1
     }
-    if [ -f "apps/$app/setup.py" ]; then
+    if [ -f "apps/$app/setup.py" ] && [ -n "$legacy_pins" ]; then
         use_installer legacy "$legacy_pins"
         echo "== installing $app (setup.py)"
+        # shellcheck disable=SC2086
+        env/bin/python -m pip install --no-cache-dir $constraint_args -e "apps/$app"
+    elif [ -f "apps/$app/setup.py" ]; then
+        # A series with no legacy installer (v16: pip<21 cannot run on its
+        # Python) still accepts a setup.py app, installed by the modern pip.
+        # Build isolation stays on: a setup.py app declares no build backend
+        # for --no-build-isolation to find in the venv.
+        use_installer modern "$modern_pins"
+        echo "== installing $app (setup.py, modern installer)"
         # shellcheck disable=SC2086
         env/bin/python -m pip install --no-cache-dir $constraint_args -e "apps/$app"
     else
@@ -276,13 +285,17 @@ def main(argv=None):
     if warning:
         sys.stderr.write("warning: " + warning + "\n\n")
 
+    legacy_pins, modern_pins, _bench_cli = known_versions.installer_pins(known)
+
     command = compose_command(engine, compose_cmd, args.root) + [
         "run", "--rm", "--no-deps", "-T",
         "-e", "SKIP_ASSETS={}".format("1" if args.skip_assets else "0"),
         "bench",
         "bash", "-s", "--",
-        " ".join(known["legacy_installer"]),
-        " ".join(known["modern_installer"]),
+        # Empty when the series has no legacy installer; the script then sends
+        # setup.py apps to the modern one.
+        legacy_pins,
+        modern_pins,
         # config.toml and nothing else (decision #36). known_versions.py seeds
         # this list at `erp-sandbox init` and is not consulted again, so an
         # environment that empties it gets no constraints. The space join is
@@ -293,8 +306,7 @@ def main(argv=None):
     print("installing {} app(s) into bench/env, in config.toml order:".format(len(apps)))
     print("  {}".format(" -> ".join(apps)))
     print("frappe {}: legacy {}, modern {}".format(
-        known["label"], " ".join(known["legacy_installer"]),
-        " ".join(known["modern_installer"])))
+        known["label"], legacy_pins or "none", modern_pins))
     print("pip constraints: {}".format(
         " ".join(constraints) if constraints
         else "none (stack.pip_constraints)"))

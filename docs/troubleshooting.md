@@ -40,6 +40,26 @@ pointed at.
 - **Fix:** use the ports and subdomain the VPS admin allocated to you, or ask
   the admin to add yours. See [vps.md](vps.md).
 
+## `stack.python was removed`
+
+- **Cause:** `config.toml` predates decision #57. The base image decides the
+  Python now.
+- **Fix:** delete the `python = ...` line from `[stack]`.
+
+## `stack.wkhtmltopdf = '<release>' has no .deb for <codename>`
+
+- **Cause:** the image installs wkhtmltopdf's `.deb` for the base image's
+  Debian release, and that release has none.
+- **Fix:** use the release the message names — `0.12.6.1-2` for bullseye,
+  `0.12.6.1-3` for bookworm. Nothing ships one for trixie.
+
+## `apps.frappe.ref = 'version-12' but stack.frappe_version = 16`
+
+- **Cause:** the bench is built for one series and the code checked out is
+  another's — usually a v12 config edited by hand.
+- **Fix:** create the environment with `erp-sandbox init --frappe 16`, or set
+  both refs to `version-16`. A fork with its own branch names can ignore this.
+
 ## A port is already in use
 
 - **Cause:** another environment is running on the same port.

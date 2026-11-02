@@ -371,6 +371,8 @@ def cmd_init(args):
     """
     if not args.here and not args.name:
         fail("erp-sandbox init needs a directory name, or --here")
+    if not known_versions.is_supported(args.frappe):
+        fail(known_versions.unsupported_message(args.frappe))
     target = Path.cwd() if args.here else project.init_target(args.name)
     target = target.resolve()
 
@@ -394,7 +396,8 @@ def cmd_init(args):
 
     config = project.config_path(target)
     if not config.exists():
-        text = project.SAMPLE_CONFIG.read_text(encoding="utf-8")
+        text = seed_series(project.SAMPLE_CONFIG.read_text(encoding="utf-8"),
+                           args.frappe)
         # Record the version that created this environment, so a later downgrade
         # of the shared tool is refused rather than discovered halfway through.
         text = re.sub(r'^min_version = "[^"]*"',
@@ -450,6 +453,31 @@ def cmd_init(args):
     print("  4. erp-sandbox preflight          -- check the host and the config")
     print("  5. erp-sandbox build              -- everything else")
     return 0
+
+
+def seed_series(text, series):
+    """
+    The sample config with one Frappe series' toolchain written in (#56).
+
+    The sample carries v12's values. For another series every [stack] pin,
+    frappe_version and the frappe/erpnext refs are replaced from that series'
+    entry in known_versions.py, so a new environment starts from a set that
+    builds rather than from v12 edited by hand. Written into the file, not
+    applied later: config.toml stays the whole answer (decision #9).
+    """
+    known = known_versions.get(series)
+    text = re.sub(r"^frappe_version = \d+", "frappe_version = {}".format(series),
+                  text, count=1, flags=re.M)
+    for key, value in known["stack_defaults"].items():
+        text, count = re.subn(r'^({}\s*=\s*)"[^"]*"'.format(re.escape(key)),
+                              lambda m, value=value: '{}"{}"'.format(m.group(1), value),
+                              text, count=1, flags=re.M)
+        if count != 1:
+            raise AssertionError("config.sample.toml has no [stack].{} to seed".format(key))
+    # Only uncommented refs: the commented example apps keep theirs.
+    return re.sub(r'^(ref\s*=\s*)"version-\d+"',
+                  lambda m: '{}"{}"'.format(m.group(1), known["app_ref"]),
+                  text, flags=re.M)
 
 
 GITIGNORE = """\
@@ -595,6 +623,10 @@ def build_parser():
                    help="a bare name goes under ~/{}/; a path is used as "
                         "given".format(project.ENVS_DIRNAME))
     p.add_argument("--here", action="store_true", help="use the current directory")
+    p.add_argument("--frappe", type=int, default=12, metavar="SERIES",
+                   help="the Frappe series to write a toolchain for: {} "
+                        "(default 12)".format(", ".join(
+                            str(v) for v in known_versions.SUPPORTED)))
 
     p = add("build", cmd_build, "run the whole build, or resume it")
     p.add_argument("--from", dest="from_step", metavar="STEP",

@@ -266,9 +266,11 @@ def validate(cfg):
     # --- [internal_ports] : container network only --------------------------
     internal = need_table("internal_ports")
     seen_internal = {}
+    # Only the three that share the bench container can collide. mariadb and
+    # redis each listen in a container of their own (decision #57).
     for key in ("web", "socketio", "file_watcher", "mariadb", "redis"):
         value = need_int(internal, "internal_ports", key, 1, 65535)
-        if value is not None:
+        if value is not None and key in BENCH_CONTAINER_PORTS:
             seen_internal.setdefault(value, []).append(key)
     for value, keys in sorted(seen_internal.items()):
         if len(keys) > 1:
@@ -298,9 +300,17 @@ def validate(cfg):
 
     # --- [stack] -----------------------------------------------------------
     stack = need_table("stack")
-    for key in ("base_image", "python", "node", "yarn", "wkhtmltopdf", "bench",
+    for key in ("base_image", "node", "yarn", "wkhtmltopdf", "bench",
                 "mariadb_image", "redis_image", "nginx_image"):
         need_str(stack, "stack", key)
+    if "python" in stack:
+        # Decision #57. Refused rather than ignored, like [devstack]: a value
+        # nothing reads looks like a setting, and the next person edits it.
+        problems.append(
+            "stack.python was removed: the base image decides the Python, and "
+            "the image build checks it is the one the Frappe series needs. "
+            "Delete the line."
+        )
 
     # Apps can need system libraries the base image has no way to predict --
     # a Frappe app wrapping systemd needs libsystemd-dev to build pystemd, and
@@ -355,16 +365,7 @@ def validate(cfg):
     else:
         # The registry knows what this series needs; config.toml must agree.
         known = known_versions.get(frappe_version)
-        for key in ("python", "node"):
-            declared = stack.get(key)
-            expected = known[key]
-            if isinstance(declared, str) and not declared.split(".")[0:2] == expected.split(".")[0:2] \
-                    and not declared.startswith(expected):
-                problems.append(
-                    "stack.{} = {!r} but Frappe {} needs {} (erp_sandbox/known_versions.py). "
-                    "One of the two is wrong, and the build would fail well after "
-                    "this point.".format(key, declared, known["label"], expected)
-                )
+        problems.extend(series_problems(stack, known))
 
     # --- [[apps]] ----------------------------------------------------------
     apps = cfg.get("apps")
@@ -534,7 +535,8 @@ def validate(cfg):
     frappe = need_table("frappe")
     need_int(frappe, "frappe", "developer_mode", 0, 1)
     need_int(frappe, "frappe", "background_workers", 1)
-    need_int(frappe, "frappe", "gunicorn_workers", 1)
+    # gunicorn_workers is accepted and ignored (decision #57): `bench serve` is
+    # werkzeug, and only bench's production supervisor config reads the key.
 
     # --- [debug] : optional ------------------------------------------------
     # Absent means disabled. An environment created before this section existed
@@ -594,6 +596,118 @@ def validate(cfg):
 
 
 PLACEHOLDER = "FILL-ME"
+
+
+# The [internal_ports] that share the bench container, and so can collide.
+BENCH_CONTAINER_PORTS = ("web", "socketio", "file_watcher")
+
+
+def _version_tuple(text):
+    """Leading numeric parts of a version string: '11.8' -> (11, 8)."""
+    parts = []
+    for piece in str(text).split("."):
+        digits = re.match(r"\d+", piece)
+        if not digits:
+            break
+        parts.append(int(digits.group(0)))
+    return tuple(parts)
+
+
+def image_tag(image):
+    """The tag of an image reference, '' when it has none."""
+    last = image.rsplit("/", 1)[-1]
+    return last.split(":", 1)[1] if ":" in last else ""
+
+
+def image_codename(image):
+    """The Debian codename an image tag names, or None (decision #57)."""
+    tag = image_tag(image)
+    for codename in known_versions.DEBIAN_CODENAMES:
+        if codename in tag:
+            return codename
+    return None
+
+
+def series_problems(stack, known):
+    """
+    Pairings the build would otherwise discover, minutes in (decision #57).
+
+    Only what is known to fail is refused here. What frappe merely warns about
+    is in series_warnings().
+    """
+    problems = []
+    label = known["label"]
+
+    node = stack.get("node")
+    if isinstance(node, str) and node.split(".")[0] != known["node"]:
+        problems.append(
+            "stack.node = {!r} but Frappe {} needs Node {} "
+            "(erp_sandbox/known_versions.py). One of the two is wrong, and the "
+            "build would fail well after this point.".format(node, label, known["node"])
+        )
+
+    bench = stack.get("bench")
+    if isinstance(bench, str) and _version_tuple(bench) \
+            and _version_tuple(bench) < _version_tuple(known["bench_min"]):
+        problems.append(
+            "stack.bench = {!r} is older than {}, the oldest bench CLI known to "
+            "work with Frappe {}.".format(bench, known["bench_min"], label)
+        )
+
+    release = stack.get("wkhtmltopdf")
+    image = stack.get("base_image")
+    codename = image_codename(image) if isinstance(image, str) else None
+    shipped = known_versions.WKHTMLTOPDF_DEBS.get(release)
+    if codename and shipped is not None and codename not in shipped:
+        fitting = sorted(r for r, names in known_versions.WKHTMLTOPDF_DEBS.items()
+                         if codename in names)
+        problems.append(
+            "stack.wkhtmltopdf = {!r} has no .deb for {}, which base_image names; "
+            "the image build would fail at the download. {}".format(
+                release, codename,
+                "Use {!r}.".format(fitting[-1]) if fitting
+                else "No wkhtmltopdf release ships one for {}.".format(codename))
+        )
+    return problems
+
+
+def series_warnings(cfg):
+    """
+    What frappe itself only warns about, or what is merely suspicious.
+
+    Said by preflight and doctor, never refused: a fork may use other branch
+    names, and a MariaDB outside frappe's range is a frappe warning, not a
+    failure (decision #57).
+    """
+    stack = cfg.get("stack") or {}
+    known = known_versions.get(stack.get("frappe_version"))
+    if not known:
+        return []
+    warnings = []
+
+    for app in cfg.get("apps") or []:
+        ref = app.get("ref", "")
+        match = re.fullmatch(r"version-(\d+)", str(ref))
+        if app.get("name") in ("frappe", "erpnext") and match \
+                and match.group(1) != str(stack.get("frappe_version")):
+            warnings.append(
+                "apps.{}.ref = {!r} but stack.frappe_version = {}. The bench "
+                "is built for one series and the code is another's.".format(
+                    app["name"], ref, stack.get("frappe_version"))
+            )
+
+    window = known.get("mariadb_range")
+    image = stack.get("mariadb_image", "")
+    version = _version_tuple(image_tag(image))
+    if window and len(version) >= 2:
+        low, high = (_version_tuple(v) for v in window)
+        if not low <= version[:2] <= high:
+            warnings.append(
+                "stack.mariadb_image is MariaDB {} but Frappe {} supports {} to "
+                "{}; frappe warns outside that range.".format(
+                    ".".join(map(str, version)), known["label"], *window)
+            )
+    return warnings
 
 
 def parse_version(text):
@@ -1437,6 +1551,9 @@ def run_checks(config_path, skip_engine=False, skip_ports=False):
         report.fail("config.toml", "\n".join(exc.problems))
         return report, None
     report.ok("config.toml parses and validates", str(config_path))
+
+    for warning in series_warnings(cfg):
+        report.warn("frappe series", warning)
 
     # Decision #36. Said here and again at the bench step, because
     # `erp-sandbox build --from bench` skips preflight entirely and that is exactly
