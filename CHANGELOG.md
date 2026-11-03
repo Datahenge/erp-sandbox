@@ -9,6 +9,10 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.4.0 — 2026-11-02
+
 ### Added
 - **Preflight checks that every image tag exists on Docker Hub** (decision
   #58). A missing tag is refused before the image build; offline it warns.
