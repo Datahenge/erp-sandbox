@@ -11,6 +11,14 @@ Dates are when the work landed on `main`.
 
 Nothing yet.
 
+## 0.5.0 — 2026-11-02
+
+### Added
+- **`[site].db_name`** names the site's MariaDB database, which frappe also
+  makes the database user. Optional; unset, frappe still picks a random name.
+  It applies when the site is created, in every seed mode, and
+  `erp-sandbox doctor` warns if it no longer matches the site.
+
 ## 0.4.2 — 2026-11-02
 
 ### Fixed
