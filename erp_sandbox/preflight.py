@@ -53,6 +53,8 @@ import shutil
 import socket
 import subprocess
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from erp_sandbox import known_versions
@@ -1289,6 +1291,71 @@ def check_registry(report, cfg, user=None, path=None):
             )
 
 
+IMAGE_KEYS = ("base_image", "mariadb_image", "redis_image", "nginx_image")
+
+
+def hub_repository(image):
+    """
+    (repository, tag) for a Docker Hub image reference, or None for any other.
+
+    docker.io/library/redis:7.4 and redis:7.4 are both ('library/redis',
+    '7.4'). An image on another registry, or pinned by digest, is not checked.
+    """
+    if "@" in image:
+        return None
+    first, _, rest = image.partition("/")
+    if rest and ("." in first or ":" in first or first == "localhost"):
+        if first not in ("docker.io", "index.docker.io", "registry-1.docker.io"):
+            return None
+        image = rest
+    name, _, tag = image.rpartition(":") if ":" in image.rsplit("/", 1)[-1] else (image, "", "")
+    if "/" not in name:
+        name = "library/" + name
+    return name, tag or "latest"
+
+
+def _hub_tag_status(repository, tag, timeout=8):
+    url = "https://hub.docker.com/v2/repositories/{}/tags/{}".format(repository, tag)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (urllib.error.URLError, OSError):
+        return None
+
+
+def check_images(report, cfg, lookup=_hub_tag_status):
+    """
+    Decision #58: an image tag that does not exist, found before any work.
+
+    Without this the first sign is the engine failing to pull it -- after the
+    image build, for mariadb, redis and nginx. Not reachable is a warning, so
+    preflight still works offline; only a definite 404 is refused.
+    """
+    for key in IMAGE_KEYS:
+        image = cfg["stack"][key]
+        parsed = hub_repository(image)
+        if parsed is None:
+            report.ok("stack.{} not checked".format(key),
+                      "{} is not a Docker Hub tag reference".format(image))
+            continue
+        status = lookup(*parsed)
+        if status == 200:
+            report.ok("stack.{} exists".format(key), image)
+        elif status == 404:
+            report.fail(
+                "stack.{} does not exist".format(key),
+                "Docker Hub has no tag {!r} for {}. Check the tags at "
+                "https://hub.docker.com/_/{}/tags".format(
+                    parsed[1], parsed[0], parsed[0].split("/", 1)[-1]),
+            )
+        else:
+            report.warn("stack.{} not checked".format(key),
+                        "Docker Hub did not answer ({}); is this machine offline?".format(
+                            status if status else "no connection"))
+
+
 def docker_is_rootless():
     """True under rootless Docker, False under a rootful daemon, None if unknown."""
     try:
@@ -1503,7 +1570,7 @@ def git_would_commit(path):
     return None
 
 
-def run_checks(config_path, skip_engine=False, skip_ports=False):
+def run_checks(config_path, skip_engine=False, skip_ports=False, skip_images=False):
     report = Report()
 
     # The environment is wherever config.toml is, not wherever the tool is
@@ -1591,6 +1658,11 @@ def run_checks(config_path, skip_engine=False, skip_ports=False):
     # owns is exactly the case the free-port test above cannot see.
     check_registry(report, cfg)
 
+    if skip_images:
+        report.warn("image check skipped", "--skip-images")
+    else:
+        check_images(report, cfg)
+
     return report, cfg
 
 
@@ -1604,9 +1676,12 @@ def main(argv=None):
                         help="do not look for podman or docker")
     parser.add_argument("--skip-ports", action="store_true",
                         help="do not test whether the published ports are free")
+    parser.add_argument("--skip-images", action="store_true",
+                        help="do not ask Docker Hub whether the image tags exist")
     args = parser.parse_args(argv)
 
-    report, _ = run_checks(args.config, args.skip_engine, args.skip_ports)
+    report, _ = run_checks(args.config, args.skip_engine, args.skip_ports,
+                           args.skip_images)
     report.render(sys.stdout)
     if report.failed:
         sys.stdout.write("\npreflight failed\n")

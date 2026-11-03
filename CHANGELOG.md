@@ -9,7 +9,21 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
-Nothing yet.
+### Added
+- **Preflight checks that every image tag exists on Docker Hub** (decision
+  #58). A missing tag is refused before the image build; offline it warns.
+  `--skip-images` turns it off.
+
+### Changed
+- **`erp-sandbox build --from <step>` re-renders first** (#58), so a fix made
+  in `config.toml` reaches the resumed build.
+
+### Fixed
+- **A pyproject app with a build backend other than frappe's failed to
+  install** — "Cannot import build backend 'hatchling.build'". Each app's own
+  `[build-system].requires` is now installed before its build.
+- **BuildKit's `InvalidDefaultArgInFrom` warning** no longer appears on every
+  image build.
 
 ## 0.3.0 — 2026-11-02
 

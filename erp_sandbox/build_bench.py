@@ -109,6 +109,40 @@ use_installer() {
     installer="$want"
 }
 
+# Pyproject apps are installed with --no-build-isolation (below), so pip builds
+# them with whatever is already in the venv and fetches nothing. Each app's own
+# [build-system].requires has to be put there first -- frappe and erpnext use
+# flit_core, but a client app may name hatchling, setuptools, poetry-core or
+# anything else. frappe and erpnext are left out: they are the reason isolation
+# is off, and the bench's own editable installs already satisfy them.
+#
+# tomllib is in the standard library from 3.11; v12's 3.9 venv reads TOML with
+# the tomli that pip vendors, which the modern installer's pip always carries.
+install_build_requires() {
+    local app="$1" reqs
+    [ -f "apps/$app/pyproject.toml" ] || return 0
+    reqs="$(env/bin/python - "apps/$app/pyproject.toml" <<'PY'
+import re, sys
+try:
+    import tomllib
+except ImportError:
+    from pip._vendor import tomli as tomllib
+with open(sys.argv[1], "rb") as handle:
+    data = tomllib.load(handle)
+for requirement in data.get("build-system", {}).get("requires", []):
+    name = re.split(r"[\s<>=!~;\[(@]", requirement.strip(), maxsplit=1)[0]
+    if name.lower().replace("_", "-") not in ("frappe", "erpnext"):
+        print(requirement)
+PY
+)"
+    [ -n "$reqs" ] || return 0
+    echo "== build requirements for $app: $(echo $reqs)"
+    printf '%s\n' "$reqs" > /tmp/erp-sandbox-build-requires.txt
+    # shellcheck disable=SC2086
+    env/bin/python -m pip install --quiet --no-cache-dir $constraint_args \
+        -r /tmp/erp-sandbox-build-requires.txt
+}
+
 for app in "$@"; do
     [ -d "apps/$app" ] || {
         echo "FATAL: apps/$app is missing. Run `erp-sandbox fetch` on the host." >&2
@@ -130,6 +164,7 @@ for app in "$@"; do
         env/bin/python -m pip install --no-cache-dir $constraint_args -e "apps/$app"
     else
         use_installer modern "$modern_pins"
+        install_build_requires "$app"
         echo "== installing $app (pyproject)"
         # --no-build-isolation on purpose. These apps declare frappe among
         # their build requirements, and an isolated build would go to PyPI for

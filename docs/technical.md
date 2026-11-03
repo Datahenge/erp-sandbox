@@ -645,6 +645,15 @@ python image rather than plain Debian (decision #55). It is **bookworm** and not
 trixie because wkhtmltopdf/packaging's last release, `0.12.6.1-3` (2023),
 ships `.deb`s for bullseye and bookworm only.
 
+### Preflight asks Docker Hub whether each image tag exists
+
+`base_image`, `mariadb_image`, `redis_image` and `nginx_image` are each looked up
+at `hub.docker.com/v2/repositories/<repo>/tags/<tag>` (decision #58). A 404 is
+refused, before the image build spends minutes and the infra step finds out;
+no answer is a warning, so preflight still works offline. An image on another
+registry, or pinned by `@sha256:`, is reported as not checked. `--skip-images`
+turns the lookup off.
+
 ### What preflight checks against the series
 
 Refused, because the build would fail minutes in (decision #57):
@@ -690,7 +699,13 @@ Pyproject apps are installed `--no-build-isolation`. They commonly declare
 `frappe` among their build requirements, and an isolated build would fetch a
 package of that name from PyPI instead of using the bench's own editable
 install. Everything the build needs must therefore already be in the venv,
-build backend included: v16's modern installer carries `flit_core`.
+build backend included. Before each pyproject app, `build_bench.py` reads that
+app's own `[build-system].requires` and installs it into `bench/env` —
+`flit_core` for frappe and erpnext, `hatchling` for an app that names it, and so
+on — leaving out `frappe` and `erpnext`, which the bench's editable installs
+already satisfy. On v12's 3.9 venv the TOML is read with the `tomli` that pip
+vendors, since `tomllib` arrived in 3.11. Build backends therefore end up
+installed in `bench/env`, which is harmless.
 
 **Apps can need system libraries**, and the image cannot guess which — an app
 wrapping a system service needs that service's `-dev` package to build its

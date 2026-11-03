@@ -26,6 +26,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -1584,6 +1585,116 @@ def run_series_cases(results, workdir):
                      stderr.getvalue().strip())
 
 
+def run_build_fixes(results, workdir):
+    """
+    Found by the first v16 build (decision #58, and the build-requires fix).
+
+    Each case is something that went wrong on a real machine: a resume that
+    ignored a config.toml fix, an image tag that did not exist, and a client
+    app whose build backend was not in the venv.
+    """
+    from erp_sandbox import build_bench, cli, preflight
+
+    # --- A: resuming re-renders ------------------------------------------
+    cases = {
+        ("infra", None): ["render", "infra", "bench", "site", "start"],
+        ("bench", None): ["render", "bench", "site", "start"],
+        (None, "site"): ["render", "site"],
+        (None, "preflight"): ["preflight"],
+        (None, None): list(cli.BUILD_STEPS),
+    }
+    wrong = {k: cli.build_steps(*k) for k, v in cases.items() if cli.build_steps(*k) != v}
+    if not wrong:
+        results.ok("build: a resumed build re-renders first, so a config.toml fix reaches it")
+    else:
+        results.fail("build: a resumed build re-renders first, so a config.toml fix reaches it",
+                     wrong)
+
+    # --- B: image tags exist ----------------------------------------------
+    parsed = {
+        "docker.io/library/redis:8.0-trixie": ("library/redis", "8.0-trixie"),
+        "mariadb": ("library/mariadb", "latest"),
+        "docker.io/acme/tool:1": ("acme/tool", "1"),
+        "ghcr.io/acme/tool:1": None,
+        "docker.io/library/python@sha256:abc": None,
+    }
+    wrong = {i: preflight.hub_repository(i) for i, want in parsed.items()
+             if preflight.hub_repository(i) != want}
+    if not wrong:
+        results.ok("images: Docker Hub references parse; other registries are left alone")
+    else:
+        results.fail("images: Docker Hub references parse; other registries are left alone", wrong)
+
+    cfg = load_config(write_config(workdir, SAMPLE.read_text(encoding="utf-8"),
+                                   name="images.toml"))
+    answers = {"library/redis": 404, "library/nginx": None}
+
+    report = preflight.Report()
+    preflight.check_images(report, cfg,
+                           lookup=lambda repo, tag: answers.get(repo, 200))
+    status = {label.split()[0]: kind for kind, label, _ in report.rows}
+    if status == {"stack.base_image": "ok", "stack.mariadb_image": "ok",
+                  "stack.redis_image": "fail", "stack.nginx_image": "warn"}:
+        results.ok("images: a missing tag is refused before any work; an unreachable "
+                   "registry only warns")
+    else:
+        results.fail("images: a missing tag is refused before any work; an unreachable "
+                     "registry only warns", report.rows)
+
+    # --- C: the BuildKit warning ------------------------------------------
+    dockerfile = (project.ASSET_DIR / "images" / "bench" / "Dockerfile").read_text(encoding="utf-8")
+    if dockerfile.splitlines()[0] == "# check=skip=InvalidDefaultArgInFrom":
+        results.ok("Dockerfile: the parser directive silencing InvalidDefaultArgInFrom is line 1")
+    else:
+        results.fail("Dockerfile: the parser directive silencing InvalidDefaultArgInFrom is line 1",
+                     "a BuildKit directive anywhere but the top is an ordinary comment")
+
+    # --- each app's build backend reaches the venv --------------------------
+    script = build_bench.BUILD_SCRIPT
+    start = script.index("install_build_requires() {")
+    function = script[start:script.index("\n}\n", start) + 3]
+    bench = Path(workdir) / "build-requires"
+    (bench / "env" / "bin").mkdir(parents=True)
+    record = bench / "pip-requests.txt"
+    stub = bench / "env" / "bin" / "python"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then\n'
+        "    cat /tmp/erp-sandbox-build-requires.txt >> {}\n"
+        "    exit 0\n"
+        "fi\n"
+        'exec {} "$@"\n'.format(record, sys.executable), encoding="utf-8")
+    stub.chmod(0o755)
+    apps = {
+        "hatch_app": '[build-system]\nrequires = ["hatchling>=1.25"]\n',
+        "needs_frappe": '[build-system]\nrequires = ["frappe>=16", "flit_core >=3.4,<4"]\n',
+    }
+    for name, text in apps.items():
+        (bench / "apps" / name).mkdir(parents=True)
+        (bench / "apps" / name / "pyproject.toml").write_text(text, encoding="utf-8")
+    (bench / "apps" / "setup_only").mkdir()
+    (bench / "apps" / "setup_only" / "setup.py").write_text("", encoding="utf-8")
+
+    for name in ("hatch_app", "needs_frappe", "setup_only"):
+        subprocess.run(
+            ["bash", "-c", "set -euo pipefail; constraint_args=''; " + function
+             + "\ninstall_build_requires " + name],
+            cwd=str(bench), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
+    requested = record.read_text(encoding="utf-8").split("\n") if record.exists() else []
+    requested = [line for line in requested if line]
+    pyproject_branch = script[script.index('echo "== installing $app (pyproject)"') - 120:
+                              script.index('echo "== installing $app (pyproject)"')]
+    if 'install_build_requires "$app"' not in pyproject_branch:
+        requested = ["install_build_requires is not called before the pyproject install"]
+    if requested == ["hatchling>=1.25", "flit_core >=3.4,<4"]:
+        results.ok("build: each app's own build backend is installed before its "
+                   "--no-build-isolation build; frappe itself is not",
+                   "hatchling, flit_core; nothing for a setup.py-only app")
+    else:
+        results.fail("build: each app's own build backend is installed before its "
+                     "--no-build-isolation build; frappe itself is not", requested)
+
+
 def run_rename_cases(results, workdir):
     """
     Decision #52: the rename is a clean break, and the break explains itself.
@@ -2256,6 +2367,7 @@ def main():
 
         print("\nfrappe series")
         run_series_cases(results, workdir)
+        run_build_fixes(results, workdir)
 
         print("\nfetch_apps")
         run_fetch_cases(results, workdir)

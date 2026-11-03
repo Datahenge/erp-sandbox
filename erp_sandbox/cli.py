@@ -119,7 +119,8 @@ def cmd_preflight(args):
     root = require_project(args)
     return preflight.main(["--config", str(require_config(root))]
                           + (["--skip-engine"] if args.skip_engine else [])
-                          + (["--skip-ports"] if args.skip_ports else []))
+                          + (["--skip-ports"] if args.skip_ports else [])
+                          + (["--skip-images"] if args.skip_images else []))
 
 
 def cmd_render(args):
@@ -533,20 +534,35 @@ this file. Do not edit that one; edit `config.toml` and re-render.
 BUILD_STEPS = ("preflight", "render", "fetch", "image", "infra", "bench", "site", "start")
 
 
+def build_steps(from_step=None, only=None):
+    """
+    The steps a build runs, render always among them once it is past render.
+
+    A resumed build re-renders first (decision #58). The failure message says
+    "fix it, then resume", and the usual fix is an edit to config.toml -- which
+    reaches the engine only through the files render writes. Skipping render on
+    resume retried the old value and failed the same way. Rendering is fast and
+    idempotent, so there is no case for skipping it.
+    """
+    steps = list(BUILD_STEPS)
+    for name in (from_step, only):
+        if name and name not in BUILD_STEPS:
+            fail("unknown step {!r}. Steps: {}".format(name, ", ".join(BUILD_STEPS)))
+    if from_step:
+        steps = steps[steps.index(from_step):]
+    if only:
+        steps = [only]
+    if "render" not in steps and BUILD_STEPS.index(steps[0]) > BUILD_STEPS.index("render"):
+        steps.insert(0, "render")
+    return steps
+
+
 def cmd_build(args):
     root = require_project(args)
     config = require_config(root)
     engine, compose = engine_or_fail()
 
-    steps = list(BUILD_STEPS)
-    if args.from_step:
-        if args.from_step not in steps:
-            fail("unknown step {!r}. Steps: {}".format(args.from_step, ", ".join(steps)))
-        steps = steps[steps.index(args.from_step):]
-    if args.only:
-        if args.only not in BUILD_STEPS:
-            fail("unknown step {!r}. Steps: {}".format(args.only, ", ".join(BUILD_STEPS)))
-        steps = [args.only]
+    steps = build_steps(args.from_step, args.only)
 
     print("building {} -- steps: {}".format(root.name, " -> ".join(steps)))
     if args.dry_run:
@@ -638,6 +654,8 @@ def build_parser():
     p = add("preflight", cmd_preflight, "check the host and validate config.toml")
     p.add_argument("--skip-engine", action="store_true")
     p.add_argument("--skip-ports", action="store_true")
+    p.add_argument("--skip-images", action="store_true",
+                   help="do not ask Docker Hub whether the image tags exist")
 
     p = add("render", cmd_render, "regenerate every generated file from config.toml")
     p.add_argument("--check", action="store_true", help="report drift instead of writing")

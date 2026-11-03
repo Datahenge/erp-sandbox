@@ -1,3 +1,9 @@
+# check=skip=InvalidDefaultArgInFrom
+#
+# The line above is a BuildKit parser directive and must stay first. BASE_IMAGE
+# has no default on purpose -- it comes from config.toml through .env -- and
+# BuildKit warns about exactly that on every build (decision #58).
+#
 # The bench container: python, node, wkhtmltopdf, and the bench CLI.
 #
 # Every version here arrives as a build arg from .env, which render.py wrote

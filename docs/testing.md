@@ -70,13 +70,14 @@ fail during the image build.
 
 ### Frappe v16 (decisions #55–#57)
 
-**None verified yet.** `selftest` covers the configuration; only a real build
-covers the image.
+`selftest` covers the configuration; only a real build covers the image. The
+first v16 build ran on 2026-11-02, under Docker, on an environment from
+`init --frappe 16` with a client app added.
 
 | # | Check | Notes |
 |---|---|---|
-| 26 | `erp-sandbox init --frappe 16` then `erp-sandbox build` completes unattended | not run. First risks: `libharfbuzz-subset0` and `default-libmysqlclient-dev` names on bookworm, mysqlclient's source build, `flit_core` under `--no-build-isolation` |
-| 27 | The image uses the base image's Python 3.14, not Debian's | not run. The build log says "base image provides python 3.14" |
+| 26 | `erp-sandbox init --frappe 16` then `erp-sandbox build` completes unattended | **partly, 2026-11-02.** The image built: bookworm's `libharfbuzz-subset0` and `default-libmysqlclient-dev` installed, and so did wkhtmltopdf `0.12.6.1-3`. frappe 16 and erpnext 16.26.1 installed into `bench/env`, `flit_core` and all. It stopped twice on things since fixed: an image tag that did not exist (now refused by preflight, #58) and a client app built with `hatchling` (build requirements now installed per app). Not yet past the bench step |
+| 27 | The image uses the base image's Python 3.14, not Debian's | **verified 2026-11-02**: the image's Python check passed with 3.14 on bookworm, whose own Python is 3.11 |
 | 28 | Site loads, login works, realtime works (item 6's checks) | not run |
 | 29 | A print format renders to PDF through wkhtmltopdf `0.12.6.1-3` | not run |
 | 30 | `erp-sandbox doctor` is clean, including the image-label check against the series' Python | not run |

@@ -40,6 +40,14 @@ pointed at.
 - **Fix:** use the ports and subdomain the VPS admin allocated to you, or ask
   the admin to add yours. See [vps.md](vps.md).
 
+## `stack.<key>_image does not exist`
+
+- **Cause:** Docker Hub has no such tag. Tag names are not regular across
+  images — `redis` publishes `8.0-bookworm` but its trixie tags start at
+  `8.4-trixie`.
+- **Fix:** pick a tag from the link in the message, then re-run. Offline,
+  `erp-sandbox preflight --skip-images` skips the lookup.
+
 ## `stack.python was removed`
 
 - **Cause:** `config.toml` predates decision #57. The base image decides the
