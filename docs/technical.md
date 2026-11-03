@@ -703,9 +703,13 @@ build backend included. Before each pyproject app, `build_bench.py` reads that
 app's own `[build-system].requires` and installs it into `bench/env` —
 `flit_core` for frappe and erpnext, `hatchling` for an app that names it, and so
 on — leaving out `frappe` and `erpnext`, which the bench's editable installs
-already satisfy. On v12's 3.9 venv the TOML is read with the `tomli` that pip
-vendors, since `tomllib` arrived in 3.11. Build backends therefore end up
-installed in `bench/env`, which is harmless.
+already satisfy. Then it asks the backend itself, through PEP 660's
+`get_requires_for_build_editable` hook, for anything it needs only at build
+time — hatchling answers `editables` there and nowhere in `[build-system]`.
+With isolation on, pip makes both calls; with it off, nothing does. The hook is
+called through the `pyproject_hooks` that pip vendors, and on v12's 3.9 venv the
+TOML is read with pip's vendored `tomli`, since `tomllib` arrived in 3.11.
+Build backends therefore end up installed in `bench/env`, which is harmless.
 
 **Apps can need system libraries**, and the image cannot guess which — an app
 wrapping a system service needs that service's `-dev` package to build its

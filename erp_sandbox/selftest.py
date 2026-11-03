@@ -1652,7 +1652,8 @@ def run_build_fixes(results, workdir):
     # --- each app's build backend reaches the venv --------------------------
     script = build_bench.BUILD_SCRIPT
     start = script.index("install_build_requires() {")
-    function = script[start:script.index("\n}\n", start) + 3]
+    helper = script.index("install_requirements() {")
+    function = script[start:script.index("\n}\n", helper) + 3]
     bench = Path(workdir) / "build-requires"
     (bench / "env" / "bin").mkdir(parents=True)
     record = bench / "pip-requests.txt"
@@ -1665,13 +1666,26 @@ def run_build_fixes(results, workdir):
         "fi\n"
         'exec {} "$@"\n'.format(record, sys.executable), encoding="utf-8")
     stub.chmod(0o755)
+    # hatch_app stands in for hatchling: an in-tree backend that, like
+    # hatchling, asks for editables only through the PEP 660 hook -- and asks
+    # for frappe too, which must still be left out.
     apps = {
-        "hatch_app": '[build-system]\nrequires = ["hatchling>=1.25"]\n',
+        "hatch_app": ('[build-system]\nrequires = ["hatchling>=1.25"]\n'
+                      'build-backend = "fake_backend"\nbackend-path = ["backend"]\n'),
         "needs_frappe": '[build-system]\nrequires = ["frappe>=16", "flit_core >=3.4,<4"]\n',
     }
     for name, text in apps.items():
         (bench / "apps" / name).mkdir(parents=True)
         (bench / "apps" / name / "pyproject.toml").write_text(text, encoding="utf-8")
+    (bench / "apps" / "hatch_app" / "backend").mkdir()
+    (bench / "apps" / "hatch_app" / "backend" / "fake_backend.py").write_text(
+        "def get_requires_for_build_editable(config_settings=None):\n"
+        "    return ['editables~=0.3', 'frappe']\n", encoding="utf-8")
+    try:
+        import pip._vendor.pyproject_hooks  # noqa: F401
+        hooks = True
+    except ImportError:                     # an interpreter without pip, as in some uv venvs
+        hooks = False
     (bench / "apps" / "setup_only").mkdir()
     (bench / "apps" / "setup_only" / "setup.py").write_text("", encoding="utf-8")
 
@@ -1686,10 +1700,16 @@ def run_build_fixes(results, workdir):
                               script.index('echo "== installing $app (pyproject)"')]
     if 'install_build_requires "$app"' not in pyproject_branch:
         requested = ["install_build_requires is not called before the pyproject install"]
-    if requested == ["hatchling>=1.25", "flit_core >=3.4,<4"]:
+    expected = (["hatchling>=1.25", "editables~=0.3", "flit_core >=3.4,<4"] if hooks
+                else None)
+    if hooks and requested == expected:
         results.ok("build: each app's own build backend is installed before its "
                    "--no-build-isolation build; frappe itself is not",
-                   "hatchling, flit_core; nothing for a setup.py-only app")
+                   "static requires, then the backend's editable hook (editables); "
+                   "nothing for a setup.py-only app")
+    elif not hooks:
+        results.ok("build: build-requires case skipped",
+                   "this interpreter has no pip to call the backend hook with")
     else:
         results.fail("build: each app's own build backend is installed before its "
                      "--no-build-isolation build; frappe itself is not", requested)

@@ -118,6 +118,9 @@ use_installer() {
 #
 # tomllib is in the standard library from 3.11; v12's 3.9 venv reads TOML with
 # the tomli that pip vendors, which the modern installer's pip always carries.
+#
+# Two passes: the static [build-system].requires, then whatever the backend
+# asks for when it is about to build editable (below).
 install_build_requires() {
     local app="$1" reqs
     [ -f "apps/$app/pyproject.toml" ] || return 0
@@ -135,6 +138,44 @@ for requirement in data.get("build-system", {}).get("requires", []):
         print(requirement)
 PY
 )"
+    install_requirements "$app" "$reqs"
+
+    # Second pass: what the backend asks for at build time, through PEP 660's
+    # get_requires_for_build_editable hook. hatchling answers "editables" here
+    # and nowhere in [build-system]. With isolation on, pip calls this hook
+    # itself; with it off, nobody does. The backend from the first pass is now
+    # importable, so it can be asked. quiet_subprocess_runner keeps the
+    # backend's own output out of the answer.
+    reqs="$(env/bin/python - "apps/$app" <<'PY'
+import re, sys
+try:
+    import tomllib
+except ImportError:
+    from pip._vendor import tomli as tomllib
+try:
+    from pip._vendor.pyproject_hooks import BuildBackendHookCaller, quiet_subprocess_runner
+except ImportError:                      # pip older than 23.1 vendored pep517
+    from pip._vendor.pep517.wrappers import (
+        Pep517HookCaller as BuildBackendHookCaller, quiet_subprocess_runner)
+source = sys.argv[1]
+with open(source + "/pyproject.toml", "rb") as handle:
+    build_system = tomllib.load(handle).get("build-system", {})
+if not build_system.get("build-backend"):
+    sys.exit(0)
+caller = BuildBackendHookCaller(source, build_system["build-backend"],
+                                backend_path=build_system.get("backend-path"),
+                                runner=quiet_subprocess_runner)
+for requirement in caller.get_requires_for_build_editable():
+    name = re.split(r"[\s<>=!~;\[(@]", requirement.strip(), maxsplit=1)[0]
+    if name.lower().replace("_", "-") not in ("frappe", "erpnext"):
+        print(requirement)
+PY
+)"
+    install_requirements "$app" "$reqs"
+}
+
+install_requirements() {
+    local app="$1" reqs="$2"
     [ -n "$reqs" ] || return 0
     echo "== build requirements for $app: $(echo $reqs)"
     printf '%s\n' "$reqs" > /tmp/erp-sandbox-build-requires.txt

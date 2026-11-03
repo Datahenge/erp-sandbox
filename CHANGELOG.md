@@ -9,6 +9,13 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+### Fixed
+- **A hatchling app still failed to install**, now with `No module named
+  'editables'`. hatchling asks for `editables` only through its build-time
+  hook, which pip does not call under `--no-build-isolation`. erp-sandbox now
+  asks each app's backend for its editable-build requirements and installs
+  them too.
+
 ### Changed
 - **The docs install from PyPI** — `uv tool install erp-sandbox`, or `sudo pipx
   install --global erp-sandbox` on a shared VPS — instead of the git URL.
