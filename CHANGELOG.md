@@ -11,6 +11,16 @@ Dates are when the work landed on `main`.
 
 Nothing yet.
 
+## 0.5.2 — 2026-11-03
+
+### Fixed
+- **MariaDB 11.8 ran with `innodb_snapshot_isolation` on**, its default since
+  11.6, under which concurrent Frappe background jobs fail with "Record has
+  changed since last read". erp-sandbox's MariaDB config now turns it off,
+  as `loose-innodb_snapshot_isolation = OFF` so that MariaDB 10.4, which has
+  no such setting, still starts. An existing environment picks it up with
+  `erp-sandbox render` and `erp-sandbox restart mariadb`.
+
 ## 0.5.1 — 2026-11-03
 
 ### Fixed
