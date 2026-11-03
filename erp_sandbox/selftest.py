@@ -1777,6 +1777,16 @@ def run_build_fixes(results, workdir):
             results.fail("build: a bench build that prints \"Build failed\" fails the step, "
                          "even when it exits 0", run.stdout.decode("utf-8", "replace")[-300:])
 
+    # --- MariaDB 11.6+ snapshot isolation, off and safe on 10.4 -----------
+    cnf = (project.ASSET_DIR / "conf" / "mariadb" / "erpnext.cnf").read_text(encoding="utf-8")
+    lines = [line.strip() for line in cnf.splitlines()]
+    if "loose-innodb_snapshot_isolation = OFF" in lines \
+            and "innodb_snapshot_isolation = OFF" not in lines:
+        results.ok("mariadb: innodb_snapshot_isolation is OFF, with loose- so 10.4 still starts")
+    else:
+        results.fail("mariadb: innodb_snapshot_isolation is OFF, with loose- so 10.4 still starts",
+                     "without loose-, a server that lacks the variable refuses to start")
+
     # --- MariaDB 11 images have no mysql* client names ---------------------
     compose = (project.ASSET_DIR / "docker-compose.yml").read_text(encoding="utf-8")
     healthcheck = compose[compose.index("healthcheck:"):compose.index("interval:")]

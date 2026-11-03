@@ -23,6 +23,13 @@ innodb_file_per_table          = 1
 
 max_allowed_packet = 256M
 
+# MariaDB 11.6 and later default this to ON, and Frappe's background jobs then
+# fail with "Record has changed since last read" when two of them touch the
+# same rows. Frappe was written against the old behaviour. loose- makes an
+# older server, which has no such variable, ignore the line instead of
+# refusing to start.
+loose-innodb_snapshot_isolation = OFF
+
 [mysql]
 default-character-set = utf8mb4
 
