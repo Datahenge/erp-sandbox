@@ -11,6 +11,15 @@ Dates are when the work landed on `main`.
 
 Nothing yet.
 
+## 0.5.1 — 2026-11-03
+
+### Fixed
+- **A build could leave `yarn.lock` modified** in an app whose lockfile was
+  out of step with its `package.json`, and `erp-sandbox fetch` then refused
+  to update that app. The bench step now runs `yarn install --pure-lockfile`,
+  which never writes the lockfile. To recover an app already affected:
+  `git -C bench/apps/<app> checkout -- yarn.lock`.
+
 ## 0.5.0 — 2026-11-02
 
 ### Added
