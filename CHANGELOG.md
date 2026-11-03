@@ -9,6 +9,10 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.4.1 — 2026-11-02
+
 ### Fixed
 - **A hatchling app still failed to install**, now with `No module named
   'editables'`. hatchling asks for `editables` only through its build-time
