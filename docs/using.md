@@ -41,6 +41,42 @@ erp-sandbox doctor
   container, so its interpreter and shebangs will not run on your machine. It
   is mounted so you can *read* it. `erp-sandbox doctor` warns if this looks wrong.
 
+## Recreating the site
+
+```sh
+erp-sandbox build --from site --force
+```
+
+Re-renders, recreates the site, then brings up the whole stack. Use it after
+changing anything that applies only when a site is created:
+
+- `[site].db_name` — `erp-sandbox doctor` warns until you do.
+- `[site].admin_password` on a `new_site` environment.
+- `[database].seed` or `dump_path` — or use `erp-sandbox seed --force`, which
+  runs the site step alone and leaves the stack as it is.
+- Which apps have `install = true`, when you want a clean site rather than
+  `erp-sandbox bench --site <site> install-app <app>`.
+
+What happens to what:
+
+| | |
+|---|---|
+| The site's database and its user | **dropped** |
+| `bench/sites/<site>/` — uploaded files, backups, `site_config.json` | moved to an archive folder under `bench/`; Frappe prints which |
+| Cloned apps, `bench/env`, built assets, the bench image | kept |
+| `config.toml`, `.erp-sandbox/` | kept |
+
+1. **Back up anything you want first:** `erp-sandbox bench backup --with-files`.
+   It writes into `bench/sites/<site>/private/backups/`, which is moved away
+   with the rest of the site, so copy it out.
+2. Edit `config.toml`.
+3. Run `erp-sandbox build --from site --force`.
+
+- **Without `--force` the site step refuses** to touch an existing site. That
+  is the only thing protecting the database.
+- With `seed = "sql_dump"` or `"frappe_backup"`, the new site is the dump's —
+  including its Administrator password ([below](#resetting-the-administrator-password)).
+
 ## Restoring a SQL dump
 
 A dump is restored by the **site step**, not by hand. It drops the site's
@@ -263,7 +299,7 @@ uv tool install --force erp-sandbox==0.3.0
 |---|---|
 | Stop for now, keep everything | `erp-sandbox down` |
 | Start it again | `erp-sandbox up` |
-| Rebuild the site from scratch, keep the clones | `erp-sandbox build --from site --force` |
+| Rebuild the site from scratch, keep the clones | `erp-sandbox build --from site --force` — [what it destroys](#recreating-the-site) |
 | Remove the environment entirely | see below |
 
 There is no `destroy` verb — removing an environment is deliberate and manual:

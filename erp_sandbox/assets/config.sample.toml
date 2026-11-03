@@ -241,6 +241,13 @@ encryption_key = ""
 [site]
 admin_password = "env:ADMIN_PASSWORD"
 
+# The MariaDB database for the site, which frappe also makes its database
+# user. Leave it unset and frappe picks a random name, such as
+# "_1a2b3c4d5e6f7a8b". Letters, digits and _, up to 64, not starting with a
+# digit. Read only when the site is created: changing it later renames nothing
+# until `erp-sandbox build --from site --force`, which destroys the site's data.
+# db_name = "acme_dev"
+
 # Shared VPS only: the https address Caddy serves this site on, one subdomain
 # per environment. It becomes Frappe's host_name, so emails, webhook payloads
 # and OAuth callbacks carry it, and `erp-sandbox proxy-snippet` prints the Caddy

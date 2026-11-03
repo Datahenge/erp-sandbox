@@ -680,6 +680,15 @@ def check_database_grants(doc, engine, cfg, root, config_path):
     if not db_name:
         return
 
+    # [site].db_name is read only by bench new-site. Changed afterwards, it
+    # says one thing while the site uses another, until a rebuild with --force.
+    wanted = cfg.get("site", {}).get("db_name")
+    if wanted and wanted != db_name:
+        doc.warn("Database", "the site's database is the one config.toml names",
+                 "site.db_name = {!r}, but the site uses {!r}".format(wanted, db_name),
+                 "it applies only when the site is created: erp-sandbox build --from site --force"
+                 " (destroys the site's data)")
+
     try:
         secrets, _warnings, _sources = resolve_all_secrets(
             load_config(config_path), config_path, groups=(SECRETS_BUILD,))

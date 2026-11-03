@@ -205,6 +205,15 @@ half of nginx's `ports:` entry, where an IPv6 literal needs brackets the two
 compose front ends do not agree on. Preflight tests the http port for freedom
 on that address; mariadb and debug are always loopback.
 
+**`[site].db_name` is optional and read once.** It becomes `bench new-site
+--db-name` in every seed mode — a restore runs into the empty site that call
+creates, and keeps its name. Frappe also uses it as the database user. Unset,
+frappe generates `_` plus 16 hex digits. Preflight accepts
+`^[A-Za-z_][A-Za-z0-9_]{0,63}$`: 64 is MariaDB's limit for a database name, and
+the character set needs no quoting. Changing it on an existing site changes
+nothing until the site is recreated; `erp-sandbox doctor` warns while the two
+disagree.
+
 **`[site].public_url` is `https://<hostname>`**, with no path and no port.
 Frappe builds root-relative URLs and sets its session cookie on path `/`, so it
 cannot be served under a prefix (#41), and an http `host_name` would put

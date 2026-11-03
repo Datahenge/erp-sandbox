@@ -296,6 +296,24 @@ requires_credentials = true''',
         'public_url = "http://acme.dev.example.com"',
         ["site.public_url", "must be https://<hostname>"],
     ),
+    (
+        "a db_name that would need quoting",
+        '# db_name = "acme_dev"',
+        'db_name = "acme-dev"',
+        ["site.db_name = 'acme-dev'", "letters, digits or _"],
+    ),
+    (
+        "a db_name past MariaDB's 64-character limit",
+        '# db_name = "acme_dev"',
+        'db_name = "{}"'.format("a" * 65),
+        ["site.db_name", "1-64"],
+    ),
+    (
+        "a db_name starting with a digit",
+        '# db_name = "acme_dev"',
+        'db_name = "1acme"',
+        ["site.db_name = '1acme'"],
+    ),
 ]
 
 # Remotes that must be ACCEPTED. Decision #24: ssh is in scope, in both
@@ -1768,6 +1786,50 @@ def run_build_fixes(results, workdir):
                      healthcheck.strip())
 
 
+def run_db_name_cases(results, workdir):
+    """[site].db_name reaches bench new-site only when it is set."""
+    from erp_sandbox import seed_db
+
+    sample = SAMPLE.read_text(encoding="utf-8")
+    named = sample.replace('# db_name = "acme_dev"', 'db_name = "acme_dev"')
+    problems = []
+    for label, text in (("unset", sample), ("set", named)):
+        try:
+            load_config(write_config(workdir, text, name="db-name-{}.toml".format(label)))
+        except ConfigError as exc:
+            problems.append("{}: {}".format(label, exc.problems))
+    if problems:
+        results.fail("site.db_name: valid when unset or a plain identifier", problems)
+    else:
+        results.ok("site.db_name: valid when unset or a plain identifier")
+
+    for label, db_name, expected in (("set", "acme_dev", ["--db-name", "acme_dev"]),
+                                     ("unset", "", [])):
+        bench = Path(workdir) / ("db-name-" + label)
+        tools = bench / "stub-bin"
+        tools.mkdir(parents=True)
+        record = bench / "new-site-args.txt"
+        (tools / "bench").write_text(
+            '#!/bin/sh\nfor a in "$@"; do echo "$a"; done >> {}\n'.format(record),
+            encoding="utf-8")
+        (tools / "bench").chmod(0o755)
+        run = subprocess.run(
+            ["bash", "-s", "--", "site1", "admin-pw", "root-pw", db_name, "0"],
+            input=seed_db.NEW_SITE.split('for app in "$@"; do')[0].encode("utf-8"),
+            cwd=str(bench), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            env=dict(os.environ, BENCH_DIR=str(bench),
+                     PATH="{}:{}".format(tools, os.environ.get("PATH", ""))))
+        args = record.read_text(encoding="utf-8").split("\n") if record.exists() else []
+        passed = [a for a in args if a in ("--db-name", "acme_dev")]
+        name = "site.db_name {}: bench new-site {}".format(
+            label, "gets --db-name acme_dev" if expected else "gets no --db-name")
+        if run.returncode == 0 and "new-site" in args and passed == expected:
+            results.ok(name)
+        else:
+            results.fail(name, "exit {}, args {}; {}".format(
+                run.returncode, args, run.stdout.decode("utf-8", "replace")[-300:]))
+
+
 def run_rename_cases(results, workdir):
     """
     Decision #52: the rename is a clean break, and the break explains itself.
@@ -2437,6 +2499,7 @@ def main():
         print("\nshared VPS")
         run_vps_cases(results, workdir)
         run_rename_cases(results, workdir)
+        run_db_name_cases(results, workdir)
 
         print("\nfrappe series")
         run_series_cases(results, workdir)

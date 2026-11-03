@@ -105,6 +105,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 APP_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # A Frappe site name becomes a directory under bench/sites/.
 SITE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+DB_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 # [credentials] keys are hostnames. Requiring a dot is crude but it catches the
 # mistake that actually happens -- keying the table by app name -- while still
 # accepting every real git host. "localhost" is the one dotless name worth
@@ -531,6 +532,19 @@ def validate(cfg):
                 "site.public_url = {!r} must be https://<hostname>, with no path "
                 "and no port -- for example \"https://acme.dev.example.com\". "
                 "Frappe cannot be served under a path (decision #41).".format(url)
+            )
+
+    # Optional. Absent, frappe names the database itself (_ and 16 hex digits).
+    # 64 is MariaDB's limit for a database name; frappe also makes the name the
+    # database user, whose limit (80) is looser. Letters, digits and _ only,
+    # not starting with a digit, so the name never needs quoting anywhere.
+    if "db_name" in site:
+        name = site["db_name"]
+        if not isinstance(name, str) or not DB_NAME_RE.match(name):
+            problems.append(
+                "site.db_name = {!r} must be 1-64 letters, digits or _, not starting "
+                "with a digit -- for example \"acme_dev\". Remove the key to let "
+                "frappe choose the name.".format(name)
             )
 
     # --- [frappe] ----------------------------------------------------------

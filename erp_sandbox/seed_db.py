@@ -52,6 +52,13 @@ cd "${BENCH_DIR:?BENCH_DIR is not set; this is not the bench image}"
 site="$1"; shift
 admin_password="$1"; shift
 db_root_password="$1"; shift
+# [site].db_name, or empty to let frappe choose. bench new-site takes it in
+# both v12 and v16, and a restore keeps whatever the empty site was created with.
+db_name="$1"; shift
+db_name_args=()
+if [ -n "$db_name" ]; then
+    db_name_args=(--db-name "$db_name")
+fi
 
 site_exists() { [ -d "sites/$site" ]; }
 
@@ -122,6 +129,7 @@ echo "== creating $site"
 bench new-site "$site" \
     --mariadb-root-password "$db_root_password" \
     --admin-password "$admin_password" \
+    "${db_name_args[@]}" \
     --no-mariadb-socket
 
 for app in "$@"; do
@@ -168,6 +176,7 @@ echo "== creating an empty $site to restore into"
 bench new-site "$site" \
     --mariadb-root-password "$db_root_password" \
     --admin-password "$admin_password" \
+    "${db_name_args[@]}" \
     --no-mariadb-socket
 
 # Risk 6. The key has to be in place before anything reads an encrypted field.
@@ -555,6 +564,7 @@ def main(argv=None):
         require_healthy_mariadb(engine, cfg["project"]["name"])
 
     print("seeding {} using mode {!r}".format(site, seed))
+    print("  database: {}".format(cfg["site"].get("db_name") or "(frappe chooses)"))
     if seed == "new_site":
         print("  apps to install: {}".format(" -> ".join(apps) or "(none)"))
         script = NEW_SITE
@@ -596,7 +606,8 @@ def main(argv=None):
     command += ["bench", "bash", "-s", "--",
                 site,
                 secrets["site.admin_password"],
-                secrets["database.root_password"]] + script_args
+                secrets["database.root_password"],
+                cfg["site"].get("db_name", "")] + script_args
 
     if args.dry_run:
         redacted = [a if a not in (secrets["site.admin_password"],

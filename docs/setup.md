@@ -205,7 +205,8 @@ erp-sandbox doctor        # is it healthy, and if not, why
   rather than starting over — the image step alone is most of the time.
   `--only <step>` runs one step; `--dry-run` prints the plan.
 - **`site` is the only destructive step.** It refuses to touch an existing site
-  without `--force`, which drops and recreates the database.
+  without `--force`, which drops and recreates the database —
+  [using.md](using.md#recreating-the-site).
 - Allow longer than 11 minutes on a slow network or a cold image cache.
 
 ## 8. Log in
