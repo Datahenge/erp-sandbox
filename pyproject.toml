@@ -3,8 +3,8 @@
 # Install it with pipx or uv, never plain pip -- modern Debian marks the system
 # interpreter externally managed (PEP 668) and `pip install` refuses:
 #
-#     pipx install git+https://github.com/Datahenge/erp-sandbox.git
-#     uv tool install git+https://github.com/Datahenge/erp-sandbox.git
+#     pipx install erp-sandbox
+#     uv tool install erp-sandbox
 #
 # Dependencies are few and deliberate. The standard library is still the
 # default answer; adding one is a choice to justify.

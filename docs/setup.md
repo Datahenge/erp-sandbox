@@ -36,7 +36,7 @@ requirements:
    Open a new shell afterwards, so `~/.local/bin` is on `PATH`.
 2. Install erp-sandbox:
    ```sh
-   uv tool install git+https://github.com/Datahenge/erp-sandbox.git
+   uv tool install erp-sandbox
    erp-sandbox --version
    ```
    - **`sandbox` is a short alias** for `erp-sandbox`: `sandbox build` is the
@@ -45,7 +45,7 @@ requirements:
 `pipx` also works:
 
 ```sh
-pipx install git+https://github.com/Datahenge/erp-sandbox.git
+pipx install erp-sandbox
 ```
 
 - **`pipx` installs under the interpreter `pipx` itself runs on.** If that is
@@ -58,6 +58,8 @@ pipx install git+https://github.com/Datahenge/erp-sandbox.git
   `PATH`.
 - **Not `pip install`.** Debian and Ubuntu mark the system interpreter
   externally managed (PEP 668), and pip refuses.
+- **Installed from the git URL before?** `uv tool install --force erp-sandbox`
+  switches it to PyPI releases.
 - **Upgrading later:** `uv tool upgrade erp-sandbox`. One installed tool
   serves every environment on the machine, so it changes all of them at once —
   see [using.md](using.md#upgrading-erp-sandbox).

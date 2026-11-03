@@ -22,7 +22,7 @@ or `sandbox` for short.
 The short version, if you have done this before:
 
 ```sh
-uv tool install git+https://github.com/Datahenge/erp-sandbox.git
+uv tool install erp-sandbox
 erp-sandbox init acme-dev && cd ~/erp-sandboxes/acme-dev
 $EDITOR config.toml .erp-sandbox/secrets.env   # both inside ~/erp-sandboxes/acme-dev/
 erp-sandbox build

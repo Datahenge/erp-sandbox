@@ -95,16 +95,23 @@ Two roles, and each waits on the other once.
 7. **Install erp-sandbox for every user** (#54):
    ```sh
    sudo apt install pipx
-   sudo pipx install --global git+https://github.com/Datahenge/erp-sandbox.git
+   sudo pipx install --global erp-sandbox
    erp-sandbox --version          # path must be under /opt/pipx/
    ```
+   - From PyPI, so the VPS runs published releases, not whatever is on `main`.
    - The environment goes in `/opt/pipx`, the commands in `/usr/local/bin`.
    - Needs the system Python to be 3.11 or newer: Debian 12+ and Ubuntu 24.04+
      qualify.
    - **Not `uv` here.** A uv-downloaded Python lands in root's home, which
      other users cannot read, and the command fails for them.
-   - **Upgrading** changes every developer's tool at once:
-     `sudo pipx upgrade --global erp-sandbox`. Tell them first.
+   - **Upgrading** changes every developer's tool at once. Tell them first:
+     ```sh
+     sudo pipx upgrade --global --pip-args='--no-cache-dir' erp-sandbox
+     erp-sandbox --version          # confirm the new version
+     ```
+     - Keep `--no-cache-dir`. Without it pip can answer from its cached copy of
+       the package index and report "already at latest version" for a release
+       published minutes earlier.
 
 ## For the VPS admin — once per developer
 

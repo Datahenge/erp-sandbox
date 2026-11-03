@@ -208,25 +208,25 @@ upgrade changes all of them at once. Nothing inside an environment is touched �
 `config.toml`, `bench/`, `data/` and the containers are unaffected.
 
 ```sh
-uv tool upgrade erp-sandbox
+uv tool upgrade --refresh erp-sandbox
 erp-sandbox --version
 ```
 
-- **It re-fetches the branch you installed from.** The tool is installed from a
-  git URL, so an upgrade pulls the latest commit on that branch; uv prints the
-  commit it moved to, and `Nothing to upgrade` when there is none.
-- **The version number is not how you tell.** `uv tool list` and uv's own output
-  show the packaged version, which only moves when a release bumps it — the code
-  changes whether or not that number does. The commit uv prints is the reliable
-  signal.
-- **Upgrade all your uv tools instead:** `uv tool upgrade --all`.
-- **`pipx` equivalent:** `pipx upgrade erp-sandbox`.
+- **It installs the newest release on PyPI.** `erp-sandbox --version` shows
+  the version and the path it runs from.
+- **Keep `--refresh`.** Without it uv may answer from its cached copy of the
+  package index and miss a release published minutes earlier.
+- **`pipx` equivalent:** `pipx upgrade --pip-args='--no-cache-dir' erp-sandbox`,
+  for the same reason.
+- **Installed from the git URL before?** `uv tool install --force erp-sandbox`
+  switches it to PyPI releases.
+- **Upgrade all your uv tools instead:** `uv tool upgrade --all --refresh`.
 
 Re-render each environment afterwards, in whatever order suits you:
 
 ```sh
-erp-sandbox --project ~/clients/acme-dev render
-erp-sandbox --project ~/clients/acme-dev doctor
+erp-sandbox --project ~/erp-sandboxes/acme-dev render
+erp-sandbox --project ~/erp-sandboxes/acme-dev doctor
 ```
 
 - **Generated files come from the installed tool**, so an upgrade that changes a
@@ -246,12 +246,14 @@ oldest tool that can build it. Upgrade the tool — do not lower the number.
 
 ### Downgrading
 
-Install the older ref explicitly — a tag, branch or commit:
+Install the older release explicitly:
 
 ```sh
-uv tool install --force \
-  "git+https://github.com/Datahenge/erp-sandbox.git@<ref>"
+uv tool install --force erp-sandbox==0.3.0
 ```
+
+- **An unreleased commit** installs from git instead — a tag, branch or commit:
+  `uv tool install --force "git+https://github.com/Datahenge/erp-sandbox.git@<ref>"`.
 
 `uv tool upgrade` moves forward only.
 

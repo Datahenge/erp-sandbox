@@ -7,9 +7,9 @@ What the tool does, from the developer's point of view. How it does it is in
 
 ```
   1. Install the tool -- once per machine, not once per client
-     $ uv tool install git+https://github.com/Datahenge/erp-sandbox.git
+     $ uv tool install erp-sandbox
      — or —
-     $ pipx install git+https://github.com/Datahenge/erp-sandbox.git
+     $ pipx install erp-sandbox
 
   2. Create an environment
      $ erp-sandbox init acme-dev         # creates ~/erp-sandboxes/acme-dev/
@@ -56,7 +56,7 @@ That second line is actively misleading — the spec is fine. The fix is to name
 an interpreter explicitly:
 
 ```sh
-pipx install --python python3.13 git+https://…
+pipx install --python python3.13 erp-sandbox
 ```
 
 or, permanently, to make pipx's own interpreter a current one — see

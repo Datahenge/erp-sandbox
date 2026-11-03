@@ -9,7 +9,13 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
-Nothing yet.
+### Changed
+- **The docs install from PyPI** — `uv tool install erp-sandbox`, or `sudo pipx
+  install --global erp-sandbox` on a shared VPS — instead of the git URL.
+  Upgrades use `uv tool upgrade --refresh` or `pipx upgrade
+  --pip-args='--no-cache-dir'`; without those, a cached package index can miss
+  a release published minutes earlier. `uv tool install --force erp-sandbox`
+  moves an existing git install over.
 
 ## 0.4.0 — 2026-11-02
 
