@@ -240,7 +240,11 @@ else
             echo "   $(basename "$app_dir"): node_modules present, skipped"
         else
             echo "   $(basename "$app_dir")"
-            ( cd "$app_dir" && yarn install --non-interactive ) 2>&1 | tail -3
+            # --pure-lockfile: install from yarn.lock and never rewrite it. A
+            # lock out of step with package.json is otherwise rewritten, which
+            # leaves the app's repository dirty and stops the next fetch.
+            # Not --frozen-lockfile, which fails the build on that mismatch.
+            ( cd "$app_dir" && yarn install --non-interactive --pure-lockfile ) 2>&1 | tail -3
         fi
     done
     # bench build can print "Build failed" and still exit 0, so the log is

@@ -1746,7 +1746,8 @@ def run_build_fixes(results, workdir):
         (bench / "apps" / "frappe" / "node_modules").mkdir()
         stubs = {
             "node": "echo v24.0.0",
-            "yarn": 'if [ "$1" = "--version" ]; then echo 1.22.22; else basename "$PWD" >> {}; fi'
+            "yarn": 'if [ "$1" = "--version" ]; then echo 1.22.22; '
+                    'else case " $* " in *" --pure-lockfile "*) basename "$PWD" >> {};; esac; fi'
                     .format(bench / "yarn-ran-in.txt"),
             # Exits 0 either way, as bench build does when esbuild reports errors.
             "bench": "echo '{}'".format(bench_output),
@@ -1763,7 +1764,8 @@ def run_build_fixes(results, workdir):
         if label == "ok":
             if run.returncode == 0 and ran_in == ["erpnext"]:
                 results.ok("build: yarn install runs in every app with a package.json "
-                           "and no node_modules yet")
+                           "and no node_modules yet", "with --pure-lockfile, so yarn.lock "
+                           "is never rewritten")
             else:
                 results.fail("build: yarn install runs in every app with a package.json "
                              "and no node_modules yet",
