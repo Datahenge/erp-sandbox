@@ -691,7 +691,9 @@ def check_database_grants(doc, engine, cfg, root, config_path):
     # the container's process list for the life of the call.
     code, out = _run([
         engine, "exec", "-e", "MYSQL_PWD=" + secrets["database.root_password"], container,
-        "mysql", "-uroot", "-N", "-B", "-e",
+        # MariaDB 11 images have only `mariadb`; the oldest supported only `mysql`.
+        "sh", "-c", 'exec "$(command -v mariadb || command -v mysql)" "$@"', "sh",
+        "-uroot", "-N", "-B", "-e",
         "select host from mysql.user where user='{}' order by host".format(db_name),
     ])
     if code != 0:

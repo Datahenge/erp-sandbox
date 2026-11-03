@@ -1180,7 +1180,7 @@ def run_cli_cases(results, workdir):
     common = {"db_host": "mariadb", "db_port": 3306}
 
     argv, env = cli.mariadb_command(site_conf, common, ["-e", "select 1"], interactive=False)
-    if argv is not None and argv[-2:] == ["-e", "select 1"] and argv[0] == "mysql":
+    if argv is not None and argv[-2:] == ["-e", "select 1"] and argv[0] == "mariadb":
         results.ok("cli: mariadb passes a query through to the client")
     else:
         results.fail("cli: mariadb passes a query through to the client", repr(argv))
@@ -1713,6 +1713,59 @@ def run_build_fixes(results, workdir):
     else:
         results.fail("build: each app's own build backend is installed before its "
                      "--no-build-isolation build; frappe itself is not", requested)
+
+    # --- assets: yarn in every app, and a "Build failed" that exits 0 -------
+    start = script.index('if [ "${SKIP_ASSETS:-}" = "1" ]; then')
+    assets = script[start:script.index("\nfi\n", start) + 4]
+    for label, bench_output in (("ok", "Done in 1s"), ("failed", "Error: Build failed with 2 errors")):
+        bench = Path(workdir) / ("assets-" + label)
+        tools = bench / "stub-bin"
+        tools.mkdir(parents=True)
+        for app in ("frappe", "erpnext", "plain_app"):
+            (bench / "apps" / app).mkdir(parents=True)
+        for app in ("frappe", "erpnext"):
+            (bench / "apps" / app / "package.json").write_text("{}", encoding="utf-8")
+        (bench / "apps" / "frappe" / "node_modules").mkdir()
+        stubs = {
+            "node": "echo v24.0.0",
+            "yarn": 'if [ "$1" = "--version" ]; then echo 1.22.22; else basename "$PWD" >> {}; fi'
+                    .format(bench / "yarn-ran-in.txt"),
+            # Exits 0 either way, as bench build does when esbuild reports errors.
+            "bench": "echo '{}'".format(bench_output),
+        }
+        for name, body in stubs.items():
+            (tools / name).write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+            (tools / name).chmod(0o755)
+        run = subprocess.run(
+            ["bash", "-c", "set -euo pipefail; " + assets],
+            cwd=str(bench), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            env=dict(os.environ, PATH="{}:{}".format(tools, os.environ.get("PATH", ""))))
+        ran_in = (bench / "yarn-ran-in.txt").read_text(encoding="utf-8").split() \
+            if (bench / "yarn-ran-in.txt").exists() else []
+        if label == "ok":
+            if run.returncode == 0 and ran_in == ["erpnext"]:
+                results.ok("build: yarn install runs in every app with a package.json "
+                           "and no node_modules yet")
+            else:
+                results.fail("build: yarn install runs in every app with a package.json "
+                             "and no node_modules yet",
+                             "exit {}, yarn ran in {}".format(run.returncode, ran_in))
+        elif run.returncode != 0 and (bench / "logs" / "erp-sandbox-bench-build.log").exists():
+            results.ok("build: a bench build that prints \"Build failed\" fails the step, "
+                       "even when it exits 0", "the log is kept in bench/logs/")
+        else:
+            results.fail("build: a bench build that prints \"Build failed\" fails the step, "
+                         "even when it exits 0", run.stdout.decode("utf-8", "replace")[-300:])
+
+    # --- MariaDB 11 images have no mysql* client names ---------------------
+    compose = (project.ASSET_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+    healthcheck = compose[compose.index("healthcheck:"):compose.index("interval:")]
+    if "mariadb-admin ping" in healthcheck and "|| mysqladmin ping" in healthcheck:
+        results.ok("mariadb: the healthcheck uses mariadb-admin, falling back to mysqladmin",
+                   "MariaDB 11 images have only the first, the oldest only the second")
+    else:
+        results.fail("mariadb: the healthcheck uses mariadb-admin, falling back to mysqladmin",
+                     healthcheck.strip())
 
 
 def run_rename_cases(results, workdir):

@@ -307,7 +307,7 @@ def mariadb_command(site_config, common_config, rest, interactive):
     if not db_name:
         return None, None
     argv = [
-        "mysql",
+        "mariadb",
         "-u", db_name,
         "-h", str(common_config.get("db_host", "mariadb")),
         "-P", str(common_config.get("db_port", 3306)),

@@ -89,13 +89,13 @@ wait_for() {
 # Decision #26: -h forces TCP. MariaDB's entrypoint runs its temporary init
 # server with --skip-networking, so a socket ping would answer during init and
 # this would proceed against a database that is not really there. No credential
-# is passed: reaching the port at all is the whole signal, and mysqladmin exits
+# is passed: reaching the port at all is the whole signal, and mariadb-admin exits
 # 0 on "Access denied" anyway.
 #
 # --silent is deliberately omitted so the diagnostic above has something to
 # print. During polling the output is discarded regardless.
 wait_for "mariadb at ${MARIADB_HOST}:${INTERNAL_MARIADB_PORT}" "$WAIT_TIMEOUT" \
-    mysqladmin ping -h "$MARIADB_HOST" -P "$INTERNAL_MARIADB_PORT"
+    mariadb-admin ping -h "$MARIADB_HOST" -P "$INTERNAL_MARIADB_PORT"
 
 wait_for "redis at ${REDIS_HOST}:${INTERNAL_REDIS_PORT}" "$WAIT_TIMEOUT" \
     redis-cli -h "$REDIS_HOST" -p "$INTERNAL_REDIS_PORT" ping

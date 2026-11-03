@@ -42,7 +42,9 @@ services:
       # with --skip-networking, so reaching the port at all is proof the real
       # server is up. No credential -- mysqladmin exits 0 on "Access denied"
       # anyway, and a healthcheck is visible in `inspect` and runs forever.
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "${INTERNAL_MARIADB_PORT}", "--silent"]
+      # MariaDB 11 images ship only the mariadb-* names, the oldest supported
+      # images only the mysql* ones; the fallback covers both.
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -P ${INTERNAL_MARIADB_PORT} --silent 2>/dev/null || mysqladmin ping -h 127.0.0.1 -P ${INTERNAL_MARIADB_PORT} --silent"]
       interval: 5s
       timeout: 5s
       retries: 12

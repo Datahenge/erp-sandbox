@@ -69,11 +69,11 @@ site_exists() { [ -d "sites/$site" ]; }
 prune_stale_grants() {
     db_name="$(python3 -c "import json;print(json.load(open('sites/$site/site_config.json'))['db_name'])" 2>/dev/null || true)"
     [ -n "$db_name" ] || return 0
-    mysql -h "${MARIADB_HOST:-mariadb}" -P "${INTERNAL_MARIADB_PORT:?}" \
+    mariadb -h "${MARIADB_HOST:-mariadb}" -P "${INTERNAL_MARIADB_PORT:?}" \
           -uroot -p"$db_root_password" -e "
               delete from mysql.user where user='$db_name' and host<>'%';
               flush privileges;" 2>/dev/null || true
-    remaining="$(mysql -h "${MARIADB_HOST:-mariadb}" -P "${INTERNAL_MARIADB_PORT}" \
+    remaining="$(mariadb -h "${MARIADB_HOST:-mariadb}" -P "${INTERNAL_MARIADB_PORT}" \
                  -uroot -p"$db_root_password" -N -B -e "
                      select count(*) from mysql.user where user='$db_name';" 2>/dev/null || echo "?")"
     echo "   grants for $db_name: $remaining (expect 1, at '%')"

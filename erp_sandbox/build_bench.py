@@ -227,17 +227,36 @@ env/bin/python -m pip list --format=freeze 2>/dev/null \
 if [ "${SKIP_ASSETS:-}" = "1" ]; then
     echo "== assets: skipped"
 else
-    # yarn install is only needed once, and it is the slow half. bench build
-    # itself is quick, and is what turns rebuilt sources into the bundles nginx
-    # serves straight off the bind mount.
-    if [ -d "apps/frappe/node_modules" ]; then
-        echo "== node_modules present, skipping yarn install"
-    else
-        echo "== yarn install (node $(node --version), yarn $(yarn --version))"
-        ( cd apps/frappe && yarn install --non-interactive ) 2>&1 | tail -3
-    fi
+    # yarn install is only needed once per app, and it is the slow half. Every
+    # app with a package.json gets one, as `bench setup requirements --node`
+    # does: esbuild resolves an app's imports from that app's own node_modules,
+    # so erpnext without one fails on "onscan.js". bench build itself is quick,
+    # and is what turns rebuilt sources into the bundles nginx serves straight
+    # off the bind mount.
+    echo "== yarn install (node $(node --version), yarn $(yarn --version))"
+    for package_json in apps/*/package.json; do
+        app_dir="$(dirname "$package_json")"
+        if [ -d "$app_dir/node_modules" ]; then
+            echo "   $(basename "$app_dir"): node_modules present, skipped"
+        else
+            echo "   $(basename "$app_dir")"
+            ( cd "$app_dir" && yarn install --non-interactive ) 2>&1 | tail -3
+        fi
+    done
+    # bench build can print "Build failed" and still exit 0, so the log is
+    # read as well as the status. The whole log is kept in bench/logs/, where
+    # the host can read it after this one-off container is gone.
     echo "== bench build"
-    bench build 2>&1 | grep -E "Built|Done|error|Error" | tail -20
+    mkdir -p logs
+    build_log="logs/erp-sandbox-bench-build.log"
+    build_status=0
+    bench build >"$build_log" 2>&1 || build_status=$?
+    if [ "$build_status" -ne 0 ] || grep -q "Build failed" "$build_log"; then
+        tail -40 "$build_log"
+        echo "bench build failed (exit $build_status). Full log: bench/$build_log" >&2
+        exit 1
+    fi
+    grep -E "Built|Done" "$build_log" | tail -20
 fi
 
 # debugpy, so that [debug].enabled is a render-and-restart away rather than a
