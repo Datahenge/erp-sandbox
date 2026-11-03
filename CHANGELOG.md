@@ -11,6 +11,23 @@ Dates are when the work landed on `main`.
 
 Nothing yet.
 
+## 0.4.2 — 2026-11-02
+
+### Fixed
+- **MariaDB 11.8 never became healthy**, so a v16 build stopped at the site
+  step. MariaDB 11 images no longer ship `mysqladmin` or `mysql`. The
+  healthcheck and doctor's grant check now use `mariadb-admin` and `mariadb`,
+  falling back to the old names for older images. In the bench container,
+  where every supported Debian release has the new names, they are used
+  directly.
+- **erpnext v16 assets failed to build** on `Could not resolve "onscan.js"`.
+  `yarn install` ran only in frappe. It now runs in every app that has a
+  `package.json`, as `bench setup requirements --node` does.
+- **A failed `bench build` let the build carry on.** `bench build` can print
+  `Build failed` and still exit 0. The build step now checks the log as well
+  as the exit status, stops on either, and keeps the full log in
+  `bench/logs/erp-sandbox-bench-build.log`.
+
 ## 0.4.1 — 2026-11-02
 
 ### Fixed
