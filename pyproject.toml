@@ -10,7 +10,7 @@
 # default answer; adding one is a choice to justify.
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]   # SPDX license string (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -29,7 +29,8 @@ dynamic = ["version"]
 description = "Build a containerized ERPNext development environment from one config.toml"
 readme = "README.md"
 requires-python = ">=3.11"      # tomllib in the standard library (decision #18)
-license = { text = "MIT" }      # LICENSE; copyright Datahenge LLC
+license = "MIT"                 # SPDX expression; copyright Datahenge LLC
+license-files = ["LICENSE"]
 authors = [{ name = "Brian Pond", email = "brian@datahenge.com" }]
 keywords = ["erpnext", "frappe", "podman", "docker", "development"]
 dependencies = []
@@ -44,8 +45,11 @@ erp-sandbox = "erp_sandbox.cli:main"
 # and `erp-sandbox build` are the same command.
 sandbox = "erp_sandbox.cli:main"
 
-[tool.setuptools]
-packages = ["erp_sandbox"]
+[tool.setuptools.packages.find]
+# Discovery, not a literal list: assets/, templates/ and fixtures/ hold no
+# .py files, but setuptools treats them as namespace packages and warns when
+# they are absent from `packages`. Their files still ship via package-data.
+include = ["erp_sandbox*"]
 
 [tool.setuptools.dynamic]
 # setuptools reads the literal by parsing the module, not by importing it, so
