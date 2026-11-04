@@ -9,6 +9,10 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.5.3 — 2026-11-03
+
 ### Fixed
 - **`bench restore` failed in a v16 environment** with `file: not found` and
   a `CommandFailedError`: frappe v16 runs the system `file` command on every
