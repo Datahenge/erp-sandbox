@@ -9,7 +9,12 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+- **`bench restore` failed in a v16 environment** with `file: not found` and
+  a `CommandFailedError`: frappe v16 runs the system `file` command on every
+  backup, and the slim base image does not include it. The v16 image now installs
+  `file`. An existing v16 environment picks it up with `erp-sandbox render`
+  then `erp-sandbox build --only image`.
 
 ## 0.5.2 — 2026-11-03
 

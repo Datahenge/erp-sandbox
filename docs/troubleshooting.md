@@ -12,6 +12,7 @@ pointed at.
 | `Expecting value: line 1 column 1` | [Non-JSON in custom/](#expecting-value-line-1-column-1) |
 | Site loads, realtime does nothing | [socket.io route](#the-site-loads-but-realtime-does-nothing) |
 | `SyntaxError: unexpected EOF` during the site step | [Old erp-sandbox](#syntaxerror-unexpected-eof-while-parsing-during-a-restore) |
+| `file: not found` during a v16 restore | [Old bench image](#file-not-found-during-a-v16-restore) |
 | `ADMIN_PASSWORD` rejected after a restore | [The dump's password wins](#the-admin-password-does-not-work-after-restoring-a-dump) |
 | Dependency conflicts after `build-bench` | [Conflicting pins](#dependency-conflicts-after-build-bench) |
 | `doctor` reports drift | [Hand-edited generated file](#a-generated-file-was-hand-edited) |
@@ -140,6 +141,19 @@ The traceback ends in `frappe/installer.py`, `is_downgrade`, `frappe.safe_eval`.
   [using.md](using.md#upgrading-erp-sandbox).
 - Nothing was restored when this fires, so the existing site is intact despite
   the message about a half-built site.
+
+## `file: not found` during a v16 restore
+
+The restore stops with `CommandFailedError`.
+
+- **Cause:** a bench image built by erp-sandbox 0.5.2 or earlier. frappe v16
+  runs the system `file` command on every backup, and that image lacks it.
+- **Fix:**
+  1. Upgrade erp-sandbox — see [using.md](using.md#upgrading-erp-sandbox).
+  2. `erp-sandbox render`
+  3. `erp-sandbox build --only image`
+  4. `erp-sandbox build --from site --force`
+- Nothing was restored when this fires.
 
 ## The admin password does not work after restoring a dump
 

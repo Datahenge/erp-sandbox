@@ -530,6 +530,10 @@ Constraints on `bench restore` that apply only inside a container:
   dump therefore needs its own size again in free space while restoring.
 - **Its output is captured as bytes.** The restore streams gzip past stderr, and
   decoding that as UTF-8 raises and takes the whole log with it.
+- **v16 needs the `file` command in the image.** Its restore runs `file` on the
+  backup to detect encryption and fails with `CommandFailedError` when the
+  command is absent. Slim base images do not carry it, so it is in v16's
+  `system_packages` in `known_versions.py`.
 
 `site_config.json` is written **as JSON, directly**, not through
 `bench set-config`: that command rejects `--site` in either position, and passes
