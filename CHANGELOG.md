@@ -13,6 +13,11 @@ Nothing yet.
 
 ## 0.6.0 — 2026-11-04
 
+**After upgrading, run `erp-sandbox render` in each existing environment**,
+then `erp-sandbox build --from image`. Three build args were renamed, and
+until `.env` is re-rendered, `erp-sandbox up` stops with
+"unset-in-.env-run-erp-sandbox-render". `build` re-renders by itself.
+
 ### Added
 - **`[bench].env_file`: runtime secrets for the apps** (decision #61). A file
   loaded into the bench container only, for credentials apps read from their
