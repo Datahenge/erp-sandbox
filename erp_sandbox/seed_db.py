@@ -98,7 +98,9 @@ site_exists() { [ -d "sites/$site" ]; }
 # to sys.argv from the named environment variable inside the process, where
 # /proc/<pid>/cmdline never sees it.
 bench_with_secrets() {
-    ( cd sites && ../env/bin/python - "$@" <<'PYEND'
+    # An absolute interpreter path, as bench uses: run as ../env/bin/python,
+    # Python's venv detection reports sys.exec_prefix as sites/../env and warns.
+    ( cd sites && "$BENCH_DIR/env/bin/python" - "$@" <<'PYEND'
 import os, runpy, sys
 args = sys.argv[1:]
 split = args.index("--")
@@ -504,13 +506,14 @@ def dump_frappe_version(dump_path):
     evaluates an empty string and raises SyntaxError before restoring anything.
     Reading the whole statement instead costs about a second on a gigabyte.
 
-    The last three columns of the row are (app name, version, branch), which is
-    the shape frappe itself relies on.
+    The row holds (app name, version, branch) in that order. In v12 they are
+    the last three columns; v16 adds has_setup_wizard, is_setup_complete and
+    the parent fields after them, so the match does not anchor on the row's end.
     """
     import gzip
     import re
 
-    frappe_row = re.compile(r"'frappe'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\)")
+    frappe_row = re.compile(r"'frappe'\s*,\s*'([^']*)'\s*,\s*'([^']*)'")
     opener = gzip.open if str(dump_path).endswith(".gz") else open
     try:
         with opener(str(dump_path), "rb") as handle:

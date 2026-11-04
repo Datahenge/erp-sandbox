@@ -258,6 +258,10 @@ def cmd_up(args):
         # The way to apply a changed [bench].env_file: an env_file is read when
         # a container is created, so `restart` keeps the old values.
         command.append("--force-recreate")
+        if args.services:
+            # Without it podman-compose 1.6.0 recreates the named service's
+            # dependencies too -- mariadb and redis for bench.
+            command.append("--no-deps")
     command += list(args.services)
     return run(command, cwd=str(root), exec_=False)
 

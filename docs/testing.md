@@ -76,7 +76,7 @@ first v16 build ran on 2026-11-02, under Docker, on an environment from
 
 | # | Check | Notes |
 |---|---|---|
-| 26 | `erp-sandbox init --frappe 16` then `erp-sandbox build` completes unattended | **partly, 2026-11-02.** The image built: bookworm's `libharfbuzz-subset0` and `default-libmysqlclient-dev` installed, and so did wkhtmltopdf `0.12.6.1-3`. frappe 16 and erpnext 16.26.1 installed into `bench/env`, `flit_core` and all. It stopped twice on things since fixed: an image tag that did not exist (now refused by preflight, #58) and a client app built with `hatchling` (build requirements now installed per app). Not yet past the bench step |
+| 26 | `erp-sandbox init --frappe 16` then `erp-sandbox build` completes unattended | **yes, 2026-11-03, rootless podman 5.4.2 with podman-compose 1.6.0**, vanilla frappe 16.55.1 and erpnext 16.53.0. It first stopped at the image step on the `PYTHON_VERSION` collision, since fixed (technical.md §9), and completed from `--from image`. `doctor` healthy afterwards; `backup --with-files` and `restore` with both tarballs round-tripped, and no secret appeared in any process's argv during the restore. Not yet run on Docker |
 | 27 | The image uses the base image's Python 3.14, not Debian's | **verified 2026-11-02**: the image's Python check passed with 3.14 on bookworm, whose own Python is 3.11 |
 | 28 | Site loads, login works, realtime works (item 6's checks) | not run |
 | 29 | A print format renders to PDF through wkhtmltopdf `0.12.6.1-3` | not run |

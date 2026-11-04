@@ -24,6 +24,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -1539,8 +1540,15 @@ def run_series_cases(results, workdir):
 
     env16 = outputs(v16)[".env"][0]
     env12 = outputs(load(sample, "series-12.toml"))[".env"][0]
-    if "PYTHON_VERSION=3.14" in env16 and "pip<21" not in env16 \
-            and "PYTHON_VERSION=3.9" in env12 and "BENCH_CLI_PINS=pip<21" in env12:
+    dockerfile = (project.ASSET_DIR / "images" / "bench" / "Dockerfile").read_text(encoding="utf-8")
+    if re.search(r"^ARG PYTHON_VERSION\b|\$\{PYTHON_VERSION\}", dockerfile, re.M):
+        results.fail("Dockerfile: the series' Python is not a build arg named PYTHON_VERSION",
+                     "the python base images set ENV PYTHON_VERSION, which overrides it")
+    else:
+        results.ok("Dockerfile: the series' Python is not a build arg named PYTHON_VERSION",
+                   "the python base images set ENV PYTHON_VERSION, which would override it")
+    if "SERIES_PYTHON_VERSION=3.14" in env16 and "pip<21" not in env16 \
+            and "SERIES_PYTHON_VERSION=3.9" in env12 and "BENCH_CLI_PINS=pip<21" in env12:
         results.ok("the image gets its Python and bench-CLI installer from the series")
     else:
         results.fail("the image gets its Python and bench-CLI installer from the series",
@@ -2323,6 +2331,31 @@ def run_restore_backup_cases(results, sample_text, workdir):
     else:
         results.fail("seed: secrets reach the script as quoted exports on stdin",
                      repr(seed_db.secret_preamble({"database.root_password": "a'b"})))
+
+    # The frappe version in a dump, in the shapes bench backup has written.
+    import gzip as _gzip
+    head = b"INSERT INTO `tabInstalled Application` VALUES"
+    shapes = {
+        "v12, one line": head + b" ('a','2020-01-01',0,1,'frappe','12.27.0','version-12');\n",
+        "v12, wrapped": head + b"\n('a','2020-01-01',0,1,'frappe','12.27.0','version-12');\n",
+        # v16 adds columns after git_branch -- the shape that read as "no version".
+        "v16, wrapped": head + b"\n('b','2026-11-04',0,2,'erpnext','16.53.0','version-16',1,0,"
+                               b"'Installed Applications','installed_applications','x'),\n"
+                               b"('c','2026-11-04',0,1,'frappe','16.55.1','version-16',1,0,"
+                               b"'Installed Applications','installed_applications','x');\n",
+    }
+    read = {}
+    for label, body in shapes.items():
+        dump = Path(workdir) / "version-{}.sql.gz".format(label.replace(" ", "").replace(",", "-"))
+        with _gzip.open(str(dump), "wb") as handle:
+            handle.write(b"-- dump\n" + body)
+        read[label] = seed_db.dump_frappe_version(dump)
+    if read == {"v12, one line": "12.27.0", "v12, wrapped": "12.27.0",
+                "v16, wrapped": "16.55.1"}:
+        results.ok("restore: the dump's frappe version is read from v12 and v16 dumps")
+    else:
+        results.fail("restore: the dump's frappe version is read from v12 and v16 dumps",
+                     repr(read))
 
     if cli.backup_command("docker", "acme-bench", "acme.localhost", True) == \
             ["docker", "exec", "acme-bench", "bench", "--site", "acme.localhost",

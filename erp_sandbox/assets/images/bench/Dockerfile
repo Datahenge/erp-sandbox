@@ -11,7 +11,7 @@
 # is a different config.toml, not a different Dockerfile.
 #
 #   podman build \
-#     --build-arg BASE_IMAGE=... --build-arg PYTHON_VERSION=... (etc, from .env) \
+#     --build-arg BASE_IMAGE=... --build-arg SERIES_PYTHON_VERSION=... (etc, from .env) \
 #     -t <project>-bench images/bench
 #
 # No credential is ever passed to this build. Apps are cloned host-side by
@@ -22,7 +22,10 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-ARG PYTHON_VERSION
+# Not PYTHON_VERSION: the official python images set ENV PYTHON_VERSION to the
+# full release (3.14.10), and an ENV overrides an ARG of the same name, so
+# every comparison below would see the image's value instead of the series'.
+ARG SERIES_PYTHON_VERSION
 ARG NODE_VERSION
 ARG YARN_VERSION
 ARG WKHTMLTOPDF_RELEASE
@@ -98,8 +101,8 @@ RUN set -eux; \
         passwd adduser locales mime-support file \
     ; \
     if command -v python3 >/dev/null \
-        && [ "$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "${PYTHON_VERSION}" ]; then \
-        echo "base image provides python ${PYTHON_VERSION} at $(command -v python3); not installing Debian's"; \
+        && [ "$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "${SERIES_PYTHON_VERSION}" ]; then \
+        echo "base image provides python ${SERIES_PYTHON_VERSION} at $(command -v python3); not installing Debian's"; \
     else \
         apt-get install -y --no-install-recommends \
             python3 python3-dev python3-venv python3-pip python3-setuptools; \
@@ -128,15 +131,15 @@ RUN set -eux; \
     locale-gen en_US.UTF-8
 
 # The base image is a TOML value, so nothing guarantees its Python is the one
-# the Frappe series needs. PYTHON_VERSION comes from the series entry in
+# the Frappe series needs. SERIES_PYTHON_VERSION comes from the series entry in
 # known_versions.py, not from config.toml (decision #57). Failing here is far
 # cheaper than failing during a dependency install forty minutes later.
 RUN set -eux; \
     actual="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"; \
-    if [ "$actual" != "${PYTHON_VERSION}" ]; then \
-        echo "FATAL: python3 is ${actual}, but this Frappe series needs ${PYTHON_VERSION}." >&2; \
+    if [ "$actual" != "${SERIES_PYTHON_VERSION}" ]; then \
+        echo "FATAL: python3 is ${actual}, but this Frappe series needs ${SERIES_PYTHON_VERSION}." >&2; \
         echo "[stack].base_image provides the wrong Python. Use an image that has" >&2; \
-        echo "${PYTHON_VERSION} -- erp-sandbox init --frappe <series> writes one that does." >&2; \
+        echo "${SERIES_PYTHON_VERSION} -- erp-sandbox init --frappe <series> writes one that does." >&2; \
         exit 1; \
     fi; \
     echo "python ${actual} is what the series needs"
@@ -243,7 +246,7 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh
 # Recorded so `erp-sandbox doctor` can compare a built image against the current
 # config.toml and notice that somebody changed a version without rebuilding.
 LABEL org.opencontainers.image.title="erp-sandbox bench" \
-      erp-sandbox.python="${PYTHON_VERSION}" \
+      erp-sandbox.python="${SERIES_PYTHON_VERSION}" \
       erp-sandbox.node="${NODE_VERSION}" \
       erp-sandbox.yarn="${YARN_VERSION}" \
       erp-sandbox.wkhtmltopdf="${WKHTMLTOPDF_RELEASE}" \

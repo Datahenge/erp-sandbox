@@ -452,7 +452,8 @@ file of their own (decision #61):
 - **doctor** runs `printenv NAME >/dev/null` per name inside the container,
   so it reports which names arrived without any value leaving the container.
 - **An env_file is read when the container is created.** `erp-sandbox up
-  --recreate bench` passes `--force-recreate`; `restart` keeps the old values.
+  --recreate bench` passes `--force-recreate --no-deps`; without `--no-deps`
+  podman-compose recreates mariadb and redis too. `restart` keeps the old values.
 - `docker inspect` / `podman inspect` show the values to anyone who can run
   the engine as the developer — the same access as a shell in the container.
 
@@ -702,13 +703,20 @@ read the installed third-party sources directly, which is the point.
 
 `config.toml` has no `python` key (decision #57). The series entry in
 `known_versions.py` names the Python, render writes it to `.env` as
-`PYTHON_VERSION`, and the image build:
+`SERIES_PYTHON_VERSION`, and the image build:
 
 1. uses the base image's `python3` when it already is that version — the
    official `python:3.14-slim-bookworm` (v16) carries 3.14 in `/usr/local`;
 2. otherwise installs Debian's `python3` — `debian:bullseye-slim` (v12) gets
    3.9 this way;
 3. fails with the version it found if the result is still not the series'.
+
+**The build arg is not called `PYTHON_VERSION`.** The official python images set
+`ENV PYTHON_VERSION` to the full release (`3.14.10`), and an `ENV` overrides an
+`ARG` of the same name — so step 1 would never match, Debian's 3.11 would be
+installed beside 3.14, and step 3 would fail. A shell exporting
+`PYTHON_VERSION`, as pyenv does, would also override it in compose's
+interpolation.
 
 No Debian release ships 3.14, which is why v16's base image is the official
 python image rather than plain Debian (decision #55). It is **bookworm** and not

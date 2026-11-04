@@ -950,9 +950,14 @@ def check_venv_not_host_usable(doc, root):
     if not os.path.lexists(env_python):
         return
     if env_python.exists():
-        doc.warn("Bench", "bench/env is the container's venv",
-                 "its interpreter resolves on this host, which is unexpected -- "
-                 "it should point at the container's Python")
+        # The link names the container's interpreter path; a host that has a
+        # file at that same path (its own /usr/local/bin/python3.14, say)
+        # resolves it to the *host's* Python. Not a fault in the environment,
+        # so not a warning -- but activating it would still be wrong.
+        doc.ok("Bench", "bench/env is the container's venv",
+               "its interpreter, {}, also exists on this host -- that is the host's "
+               "Python, not the container's. Do not activate bench/env from the host"
+               .format(os.path.realpath(env_python)))
     else:
         doc.ok("Bench", "bench/env is the container's venv",
                "its interpreter exists only inside the container; do not activate "
@@ -1078,6 +1083,11 @@ def check_genericity(doc, root):
         needles.add(app["repo"])
     needles = {n for n in needles if n and len(n) > 3
                and n not in ("frappe", "erpnext", "bench", "site")}
+    # Values the tool itself publishes -- the upstream frappe and erpnext repos
+    # in config.sample.toml -- are not a client's, however many environments
+    # hold them.
+    published = project.SAMPLE_CONFIG.read_text(encoding="utf-8")
+    needles = {n for n in needles if n not in published}
 
     offenders = []
     for relative in out.split("\n"):

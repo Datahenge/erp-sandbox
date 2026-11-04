@@ -21,7 +21,8 @@ Dates are when the work landed on `main`.
   command line (decision #62).
 - **`erp-sandbox backup [--with-files]`**: `bench backup` for the site, listing
   the files it wrote.
-- **`erp-sandbox up --recreate`**, which applies a changed `env_file`.
+- **`erp-sandbox up --recreate`**, which applies a changed `env_file`. Given a
+  service, it recreates that service only.
 
 ### Security
 - **No secret on a command line any more** (decision #62). `seed`, the site
@@ -40,6 +41,18 @@ Dates are when the work landed on `main`.
   (decision #60).
 
 ### Fixed
+- **A v16 dump's frappe version read as "not recorded"**, so the downgrade
+  warning (decision #39) never fired for v16. v16 added columns after
+  `git_branch` in `tabInstalled Application`.
+- **doctor flagged the upstream frappe and erpnext repo URLs** as client
+  values in a committed file, and warned that `bench/env`'s interpreter
+  resolved on a host that has its own Python at the same path.
+- **The v16 image build failed** with "python3 is 3.14, but this Frappe series
+  needs 3.14.10", after installing Debian's Python 3.11 beside the image's
+  3.14. The official python base image sets `ENV PYTHON_VERSION`, which
+  overrode the build arg of the same name; the arg is now
+  `SERIES_PYTHON_VERSION`. Picked up with `erp-sandbox render` then
+  `erp-sandbox build --from image`.
 - **doctor: every app reported missing on bench 5.31**, whose `bench version`
   prints four fields per app.
 - **doctor: socket.io warned on a working v16 site.** The probe now tries
