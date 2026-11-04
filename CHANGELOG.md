@@ -9,6 +9,10 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.6.0 — 2026-11-04
+
 ### Added
 - **`[bench].env_file`: runtime secrets for the apps** (decision #61). A file
   loaded into the bench container only, for credentials apps read from their
