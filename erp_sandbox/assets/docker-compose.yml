@@ -79,8 +79,8 @@ services:
         BASE_IMAGE: ${BASE_IMAGE:?unset-in-.env-run-erp-sandbox-render}
         SERIES_PYTHON_VERSION: ${SERIES_PYTHON_VERSION:?unset-in-.env-run-erp-sandbox-render}
         BENCH_CLI_PINS: ${BENCH_CLI_PINS:?unset-in-.env-run-erp-sandbox-render}
-        NODE_VERSION: ${NODE_VERSION:?unset-in-.env-run-erp-sandbox-render}
-        YARN_VERSION: ${YARN_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        STACK_NODE_VERSION: ${STACK_NODE_VERSION:?unset-in-.env-run-erp-sandbox-render}
+        STACK_YARN_VERSION: ${STACK_YARN_VERSION:?unset-in-.env-run-erp-sandbox-render}
         WKHTMLTOPDF_RELEASE: ${WKHTMLTOPDF_RELEASE:?unset-in-.env-run-erp-sandbox-render}
         BENCH_VERSION: ${BENCH_VERSION:?unset-in-.env-run-erp-sandbox-render}
         EXTRA_PACKAGES: ${EXTRA_PACKAGES:-}

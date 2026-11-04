@@ -1541,12 +1541,17 @@ def run_series_cases(results, workdir):
     env16 = outputs(v16)[".env"][0]
     env12 = outputs(load(sample, "series-12.toml"))[".env"][0]
     dockerfile = (project.ASSET_DIR / "images" / "bench" / "Dockerfile").read_text(encoding="utf-8")
-    if re.search(r"^ARG PYTHON_VERSION\b|\$\{PYTHON_VERSION\}", dockerfile, re.M):
-        results.fail("Dockerfile: the series' Python is not a build arg named PYTHON_VERSION",
-                     "the python base images set ENV PYTHON_VERSION, which overrides it")
+    # Names the official python and node images set as ENV, which would
+    # override a build arg of the same name without any error.
+    inherited = ("PYTHON_VERSION", "NODE_VERSION", "YARN_VERSION")
+    clashes = [n for n in inherited
+               if re.search(r"^ARG {0}\b|\$\{{{0}\}}".format(n), dockerfile, re.M)]
+    if clashes:
+        results.fail("Dockerfile: no build arg shares a name a base image sets as ENV",
+                     ", ".join(clashes))
     else:
-        results.ok("Dockerfile: the series' Python is not a build arg named PYTHON_VERSION",
-                   "the python base images set ENV PYTHON_VERSION, which would override it")
+        results.ok("Dockerfile: no build arg shares a name a base image sets as ENV",
+                   ", ".join(inherited))
     if "SERIES_PYTHON_VERSION=3.14" in env16 and "pip<21" not in env16 \
             and "SERIES_PYTHON_VERSION=3.9" in env12 and "BENCH_CLI_PINS=pip<21" in env12:
         results.ok("the image gets its Python and bench-CLI installer from the series")
@@ -2356,6 +2361,31 @@ def run_restore_backup_cases(results, sample_text, workdir):
     else:
         results.fail("restore: the dump's frappe version is read from v12 and v16 dumps",
                      repr(read))
+
+    # init into a directory it cannot write: one line naming the path, no traceback.
+    locked = Path(workdir) / "init-read-only"
+    locked.mkdir()
+    locked.chmod(0o555)
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                cli.main(["init", str(locked / "env")])
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+            except OSError as exc:
+                code = "traceback: {}".format(exc)
+    finally:
+        locked.chmod(0o755)
+    if os.geteuid() == 0:
+        results.ok("init: an unwritable directory is reported, not a traceback",
+                   "skipped: root can write a mode-555 directory")
+    elif code == 2 and "could not create the environment at" in err.getvalue():
+        results.ok("init: an unwritable directory is reported, not a traceback")
+    else:
+        results.fail("init: an unwritable directory is reported, not a traceback",
+                     "exit {!r}: {}".format(code, err.getvalue()[-200:]))
 
     if cli.backup_command("docker", "acme-bench", "acme.localhost", True) == \
             ["docker", "exec", "acme-bench", "bench", "--site", "acme.localhost",

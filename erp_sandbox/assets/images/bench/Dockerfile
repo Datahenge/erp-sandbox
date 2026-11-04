@@ -26,8 +26,10 @@ FROM ${BASE_IMAGE}
 # full release (3.14.10), and an ENV overrides an ARG of the same name, so
 # every comparison below would see the image's value instead of the series'.
 ARG SERIES_PYTHON_VERSION
-ARG NODE_VERSION
-ARG YARN_VERSION
+# STACK_ prefixed for the same reason: the official node images set ENV
+# NODE_VERSION and ENV YARN_VERSION, and base_image is a TOML value.
+ARG STACK_NODE_VERSION
+ARG STACK_YARN_VERSION
 ARG WKHTMLTOPDF_RELEASE
 ARG BENCH_VERSION
 ARG BENCH_CLI_PINS
@@ -158,13 +160,13 @@ RUN set -eux; \
         arm64) node_arch=arm64 ;; \
         *) echo "FATAL: no Node tarball for architecture ${arch}" >&2; exit 1 ;; \
     esac; \
-    tarball="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"; \
-    wget -q "https://nodejs.org/dist/v${NODE_VERSION}/${tarball}" -O /tmp/node.tar.xz; \
+    tarball="node-v${STACK_NODE_VERSION}-linux-${node_arch}.tar.xz"; \
+    wget -q "https://nodejs.org/dist/v${STACK_NODE_VERSION}/${tarball}" -O /tmp/node.tar.xz; \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
         --exclude CHANGELOG.md --exclude LICENSE --exclude README.md; \
     rm /tmp/node.tar.xz; \
     test -x /usr/local/bin/node; \
-    npm install -g "yarn@${YARN_VERSION}"; \
+    npm install -g "yarn@${STACK_YARN_VERSION}"; \
     npm cache clean --force
 
 # ---------------------------------------------------------------------------
@@ -247,8 +249,8 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh
 # config.toml and notice that somebody changed a version without rebuilding.
 LABEL org.opencontainers.image.title="erp-sandbox bench" \
       erp-sandbox.python="${SERIES_PYTHON_VERSION}" \
-      erp-sandbox.node="${NODE_VERSION}" \
-      erp-sandbox.yarn="${YARN_VERSION}" \
+      erp-sandbox.node="${STACK_NODE_VERSION}" \
+      erp-sandbox.yarn="${STACK_YARN_VERSION}" \
       erp-sandbox.wkhtmltopdf="${WKHTMLTOPDF_RELEASE}" \
       erp-sandbox.bench="${BENCH_VERSION}" \
       erp-sandbox.host_uid="${HOST_UID}" \

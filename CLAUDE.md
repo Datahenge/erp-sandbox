@@ -196,6 +196,11 @@ pointing somewhere later commands will silently inherit.
   specifically is never replaced; that is what the 3.11 floor buys (#18).
 - The base compose file stays inside the Docker Compose / podman-compose common
   subset; engine-specific syntax goes in the generated overlay.
+- **A build arg or environment variable the tool defines must not share a name
+  a base image or a developer's shell may already set** — `PYTHON_VERSION`,
+  `NODE_VERSION`, `PATH`-like names. An inherited `ENV` overrides an `ARG` of
+  the same name without any error. Prefix the tool's own (`SERIES_…`,
+  `STACK_…`); selftest checks the known names.
 - **Bind mounts over named volumes.** A named volume is acceptable only where
   the content is genuinely disposable and never hand-edited, and must be called
   out explicitly when proposed.

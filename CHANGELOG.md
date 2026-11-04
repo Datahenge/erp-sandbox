@@ -41,6 +41,8 @@ Dates are when the work landed on `main`.
   (decision #60).
 
 ### Fixed
+- **`erp-sandbox init` printed a traceback** when it could not create or write
+  the directory. It now names the path and the reason in one line.
 - **A v16 dump's frappe version read as "not recorded"**, so the downgrade
   warning (decision #39) never fired for v16. v16 added columns after
   `git_branch` in `tabInstalled Application`.
@@ -51,7 +53,9 @@ Dates are when the work landed on `main`.
   needs 3.14.10", after installing Debian's Python 3.11 beside the image's
   3.14. The official python base image sets `ENV PYTHON_VERSION`, which
   overrode the build arg of the same name; the arg is now
-  `SERIES_PYTHON_VERSION`. Picked up with `erp-sandbox render` then
+  `SERIES_PYTHON_VERSION`. `NODE_VERSION` and `YARN_VERSION`, which the
+  official node images set, are now `STACK_NODE_VERSION` and
+  `STACK_YARN_VERSION`. Picked up with `erp-sandbox render` then
   `erp-sandbox build --from image`.
 - **doctor: every app reported missing on bench 5.31**, whose `bench version`
   prints four fields per app.

@@ -159,7 +159,8 @@ Restarting is rarely what is wanted, though. `developer_mode = 1` and
 `bench watch` mean Python changes are picked up by the reloader and asset
 changes are rebuilt on save. The cases that genuinely need a restart are a
 changed `site_config.json`, a changed `Procfile`, and a new app installed into
-the venv.
+the venv. A changed `[bench].env_file` needs more than a restart:
+`erp-sandbox up --recreate bench`.
 
 **Three things that are not bench commands** and so are not `erp-sandbox bench`:
 
@@ -176,12 +177,13 @@ erp-sandbox mariadb -e "select 1"       # ...or a query; arguments pass through
 `os.execv` with a hardcoded argv, so it can never take an argument — a query
 through it dies on `no such option: -e`. `erp-sandbox mariadb` execs the client
 itself, reading the credentials out of `site_config.json`, and passes your
-arguments through. The password travels in `MYSQL_PWD` rather than on the
-command line, where the container's process list would show it.
+arguments through. The password travels in `MYSQL_PWD`, handed to the engine
+as `-e MYSQL_PWD` with no value, so it is on no command line — the
+container's or the engine client's.
 
 **Why not run `bench` on the host?** `bench/env` is bind-mounted and built
 *inside* the container (decision #22), so its interpreter and shebangs are the
-base image's Python 3.9. They will not execute on a modern host. The venv is
+base image's Python — 3.9 for v12, 3.14 for v16. They will not execute on a modern host. The venv is
 mounted so it can be **read** — for IntelliSense and for reading the pinned
 v12-era dependencies whose failure modes you end up debugging — never activated
 from the host. `erp-sandbox doctor` warns if it detects an attempt.

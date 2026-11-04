@@ -77,11 +77,11 @@ first v16 build ran on 2026-11-02, under Docker, on an environment from
 | # | Check | Notes |
 |---|---|---|
 | 26 | `erp-sandbox init --frappe 16` then `erp-sandbox build` completes unattended | **yes, 2026-11-03, rootless podman 5.4.2 with podman-compose 1.6.0**, vanilla frappe 16.55.1 and erpnext 16.53.0. It first stopped at the image step on the `PYTHON_VERSION` collision, since fixed (technical.md §9), and completed from `--from image`. `doctor` healthy afterwards; `backup --with-files` and `restore` with both tarballs round-tripped, and no secret appeared in any process's argv during the restore. Not yet run on Docker |
-| 27 | The image uses the base image's Python 3.14, not Debian's | **verified 2026-11-02**: the image's Python check passed with 3.14 on bookworm, whose own Python is 3.11 |
-| 28 | Site loads, login works, realtime works (item 6's checks) | not run |
+| 27 | The image uses the base image's Python 3.14, not Debian's | **verified 2026-11-02** under Docker: the image's Python check passed with 3.14 on bookworm, whose own Python is 3.11. **Verified 2026-11-03 on rootless podman** once the build arg was renamed `SERIES_PYTHON_VERSION` (technical.md §9); before that, podman installed Debian's 3.11 and the check failed |
+| 28 | Site loads, login works, realtime works (item 6's checks) | **partly, 2026-11-03, rootless podman**: nginx returns 200 and socket.io issues a session id at EIO=4. Login not tried |
 | 29 | A print format renders to PDF through wkhtmltopdf `0.12.6.1-3` | not run |
-| 30 | `erp-sandbox doctor` is clean, including the image-label check against the series' Python | not run |
-| 31 | An existing v12 environment rebuilds after this work | not run. Re-rendering changes it: `.env` gains `BENCH_CLI_PINS`, `gunicorn_workers` leaves `common_site_config.json`, and the Dockerfile changed, so the image step rebuilds. A `python` line in its `config.toml` must be deleted first |
+| 30 | `erp-sandbox doctor` is clean, including the image-label check against the series' Python | **yes, 2026-11-03, rootless podman**: healthy, the image check included |
+| 31 | An existing v12 environment rebuilds after this work | not run. Re-rendering changes it: `.env` gains `BENCH_CLI_PINS`, and `SERIES_PYTHON_VERSION`, `STACK_NODE_VERSION` and `STACK_YARN_VERSION` replace their unprefixed names, `gunicorn_workers` leaves `common_site_config.json`, and the Dockerfile changed, so the image step rebuilds. A `python` line in its `config.toml` must be deleted first |
 
 When 26–30 pass, fill in `verified` in v16's `known_versions.py` entry.
 

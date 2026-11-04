@@ -165,8 +165,9 @@ Two roles, and each waits on the other once.
    3. Log in as `Administrator`.
    4. From your own machine, `curl -m 5 http://<vps-address>:8101/` must
       **fail**. If it answers, `ports.http` is exposed — check `[ports].bind`.
-6. **Restoring a client dump:** neutralise it with Cofferdam before anyone
-   uses the site.
+6. **Restoring a client dump:** `erp-sandbox restore <dump> --force`
+   ([using.md](using.md#restoring-a-sql-dump)), then neutralise it with
+   Cofferdam before anyone uses the site.
 
 ### Working on the VPS
 

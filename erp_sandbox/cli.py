@@ -456,6 +456,31 @@ def cmd_init(args):
              "`erp-sandbox init --here` inside it if it really should become an "
              "environment.".format(target))
 
+    try:
+        created = _scaffold(target, args.frappe)
+    except OSError as exc:
+        # A directory that cannot be created or written -- a read-only home, a
+        # parent owned by someone else, a full disk. Name the path and the
+        # reason; a traceback reads as a bug in the tool.
+        fail("could not create the environment at {}: {}{}".format(
+            target, exc.strerror or exc,
+            " ({})".format(exc.filename) if exc.filename and str(exc.filename) != str(target)
+            else ""))
+    print("created {} in {}".format(", ".join(created), target))
+    print()
+    print("Next:")
+    print("  1. cd {}".format(target))
+    print("  2. edit {}  -- repos, refs, ports, versions".format(
+        project.config_path(target)))
+    print("  3. edit {}  -- passwords and any git token".format(
+        project.default_secrets_path(target)))
+    print("  4. erp-sandbox preflight          -- check the host and the config")
+    print("  5. erp-sandbox build              -- everything else")
+    return 0
+
+
+def _scaffold(target, frappe):
+    """Write a new environment's files into target. Returns what was created."""
     target.mkdir(parents=True, exist_ok=True)
     state = project.state_dir(target)
     state.mkdir(exist_ok=True)
@@ -465,7 +490,7 @@ def cmd_init(args):
     config = project.config_path(target)
     if not config.exists():
         text = seed_series(project.SAMPLE_CONFIG.read_text(encoding="utf-8"),
-                           args.frappe)
+                           frappe)
         # Record the version that created this environment, so a later downgrade
         # of the shared tool is refused rather than discovered halfway through.
         text = re.sub(r'^min_version = "[^"]*"',
@@ -517,17 +542,7 @@ def cmd_init(args):
         claude_md.write_text(ENV_CLAUDE_MD, encoding="utf-8")
         created.append("CLAUDE.md")
 
-    print("created {} in {}".format(", ".join(created), target))
-    print()
-    print("Next:")
-    print("  1. cd {}".format(target))
-    print("  2. edit {}  -- repos, refs, ports, versions".format(
-        project.config_path(target)))
-    print("  3. edit {}  -- passwords and any git token".format(
-        project.default_secrets_path(target)))
-    print("  4. erp-sandbox preflight          -- check the host and the config")
-    print("  5. erp-sandbox build              -- everything else")
-    return 0
+    return created
 
 
 def seed_series(text, series):

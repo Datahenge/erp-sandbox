@@ -90,7 +90,8 @@ cd ~/erp-sandboxes/acme-dev
 ├── config.toml              # the only file you edit
 ├── CLAUDE.md                # yours; notes for this client
 ├── .erp-sandbox/
-│   └── secrets.env          # 0600; passwords and any git token
+│   ├── secrets.env          # 0600; passwords and any git token
+│   └── bench.sample.env     # a start for runtime secrets, if your apps need any
 └── .gitignore               # knows what is generated
 ```
 

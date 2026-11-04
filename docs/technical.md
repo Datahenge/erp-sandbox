@@ -563,6 +563,10 @@ whole statement can be read. It prints `frappe: dump <a> -> bench <b>` and
 components are compared, because a fork's version string carries anything after
 them. Decision #39.
 
+The row is read as `'frappe', '<version>', '<branch>'` wherever it sits in the
+tuple: v12 ends the row there, and v16 adds `has_setup_wizard`,
+`is_setup_complete` and the parent fields after it.
+
 ### Restoring inside a container
 
 `erp-sandbox restore <dump>` runs this same restore with the dump, and
