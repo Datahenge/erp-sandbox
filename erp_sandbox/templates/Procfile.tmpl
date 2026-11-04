@@ -9,9 +9,12 @@
 # debugpy with --noreload when [debug].enabled is set.  render.web_command()
 # explains why the reloader cannot stay on.  Only that one process is ever
 # instrumented (decision #29).
+#
+# The watch line is dropped when [frappe].watch is false; assets are then
+# rebuilt only by `erp-sandbox bench build`.
 
 web: @@{web}
 socketio: /usr/local/bin/node apps/frappe/socketio.js
-watch: bench watch
+@@{watch}
 schedule: bench schedule
 @@{workers}

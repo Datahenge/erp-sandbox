@@ -422,6 +422,7 @@ def build_outputs(cfg, secrets, uid, gid):
         render_template("Procfile.tmpl", {
             "header": comment_header(),
             "web": web_command(internal["web"], debug_port),
+            "watch": watch_line(frappe.get("watch", True)),
             "workers": worker_lines(frappe["background_workers"]),
         }),
         None,
@@ -558,6 +559,18 @@ def all_extra_packages(stack):
         if name not in packages:
             packages.append(name)
     return packages
+
+
+def watch_line(enabled):
+    """
+    The Procfile's ``watch:`` line, or a comment saying it is off.
+
+    Absent from config.toml means on, so an environment rendered before the key
+    existed gets the same Procfile it always had.
+    """
+    if enabled:
+        return "watch: bench watch"
+    return "# watch: off ([frappe].watch = false) -- run `erp-sandbox bench build`"
 
 
 def worker_lines(count):

@@ -157,7 +157,8 @@ erp-sandbox restart                     # everything in the Procfile
 
 Restarting is rarely what is wanted, though. `developer_mode = 1` and
 `bench watch` mean Python changes are picked up by the reloader and asset
-changes are rebuilt on save. The cases that genuinely need a restart are a
+changes are rebuilt on save. With `[frappe].watch = false` there is no
+`bench watch`, and asset changes wait for `erp-sandbox bench build`. The cases that genuinely need a restart are a
 changed `site_config.json`, a changed `Procfile`, and a new app installed into
 the venv. A changed `[bench].env_file` needs more than a restart:
 `erp-sandbox up --recreate bench`.

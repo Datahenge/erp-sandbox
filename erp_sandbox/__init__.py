@@ -7,4 +7,4 @@ modern Debian marks the system interpreter externally managed (PEP 668).
 See decision #27.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

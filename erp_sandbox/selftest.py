@@ -603,6 +603,46 @@ def run_debug_cases(results, workdir):
     )
 
 
+def run_watch_cases(results, workdir):
+    """[frappe].watch: on unless switched off, and absent means on."""
+    sample = SAMPLE.read_text(encoding="utf-8")
+    key = "watch              = true"
+    if key not in sample:
+        results.fail("[frappe].watch is in config.sample.toml",
+                     "no {!r} to switch".format(key))
+        return
+    results.ok("[frappe].watch is in config.sample.toml")
+
+    def procfile(text, name):
+        cfg = load_config(write_config(workdir, text, name=name))
+        outputs = render.build_outputs(cfg, {"database.root_password": "x",
+                                             "site.admin_password": "y"}, 1000, 1000)
+        return [ln for ln in outputs["bench/Procfile"][0].splitlines()
+                if not ln.startswith("#")]
+
+    on = procfile(sample, "watch-on.toml")
+    off = procfile(sample.replace(key, "watch              = false"), "watch-off.toml")
+    # An environment rendered before the key existed must not drift.
+    absent = procfile(sample.replace(key + "\n", ""), "watch-absent.toml")
+
+    if "watch: bench watch" in on and on == absent:
+        results.ok("[frappe].watch absent or true keeps the watch line")
+    else:
+        results.fail("[frappe].watch absent or true keeps the watch line",
+                     "\n".join(absent))
+    if not any(ln.startswith("watch:") for ln in off) and \
+            [ln for ln in on if not ln.startswith("watch:")] == off:
+        results.ok("[frappe].watch = false drops only the watch line")
+    else:
+        results.fail("[frappe].watch = false drops only the watch line", "\n".join(off))
+
+    expect_rejected(
+        results, "a non-boolean [frappe].watch is refused",
+        sample.replace(key, 'watch              = "no"'),
+        ["frappe.watch"], workdir,
+    )
+
+
 def run_briefing_cases(results, workdir):
     """
     The agent briefing: where it lives, and what must stay true of it.
@@ -2964,6 +3004,7 @@ def main():
 
         print("\nhygiene")
         run_debug_cases(results, workdir)
+        run_watch_cases(results, workdir)
         run_briefing_cases(results, workdir)
         run_workspace_cases(results, workdir)
         run_guard_cases(results, workdir)

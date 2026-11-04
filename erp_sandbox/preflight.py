@@ -556,6 +556,7 @@ def validate(cfg):
     frappe = need_table("frappe")
     need_int(frappe, "frappe", "developer_mode", 0, 1)
     need_int(frappe, "frappe", "background_workers", 1)
+    optional_bool(frappe, "frappe", "watch", True)
     # gunicorn_workers is accepted and ignored (decision #57): `bench serve` is
     # werkzeug, and only bench's production supervisor config reads the key.
 

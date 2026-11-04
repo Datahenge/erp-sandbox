@@ -302,3 +302,7 @@ developer_mode     = 1
 background_workers = 1           # worker processes per queue (short/long/
                                  #   default) in erp-sandbox's Procfile, which
                                  #   is the same for every series
+watch              = true         # run `bench watch` in the Procfile. false
+                                 #   saves its memory; rebuild assets with
+                                 #   `erp-sandbox bench build` after a JS/CSS
+                                 #   change. Absent means true.

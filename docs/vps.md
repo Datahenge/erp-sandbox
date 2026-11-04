@@ -181,6 +181,10 @@ Two roles, and each waits on the other once.
   `ssh -L 3316:127.0.0.1:3316 -L 5678:127.0.0.1:5678 bob@vps`.
 - **Cloning over ssh** needs a key on the VPS or agent forwarding (`ssh -A`).
   Agent forwarding lets root on the VPS use your key while you are connected.
+- **`[frappe].watch = false` saves memory** where nobody edits JS or CSS, such
+  as a testers' environment. Then run `erp-sandbox bench build --app <app>`
+  after every pull that touches front-end files, or testers see the old
+  bundle with no error.
 
 ## Reboots
 

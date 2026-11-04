@@ -11,6 +11,14 @@ Dates are when the work landed on `main`.
 
 Nothing yet.
 
+## 0.7.0 — 2026-11-04
+
+### Added
+- **`[frappe].watch`**: `false` leaves `bench watch` out of the Procfile, for
+  environments where nobody edits JS or CSS and the watcher's memory is better
+  spent elsewhere. Absent means `true`; existing environments render unchanged.
+  Run `erp-sandbox render`, then `erp-sandbox restart`, after changing it.
+
 ## 0.6.0 — 2026-11-04
 
 **After upgrading, run `erp-sandbox render` in each existing environment**,

@@ -41,6 +41,9 @@ erp-sandbox up --recreate bench    # apply a changed [bench].env_file
   Procfile, or installing an app. (The reloader is werkzeug's, not
   `developer_mode` — turning that off will not stop it. Enabling `[debug]`
   will.)
+  With `[frappe].watch = false` nothing rebuilds assets: run `erp-sandbox
+  bench build --app <app>` after a JS or CSS change, or the browser keeps the
+  old bundle.
 - **Do not activate `bench/env` from the host.** It is built inside the
   container, so its interpreter and shebangs will not run on your machine. It
   is mounted so you can *read* it. `erp-sandbox doctor` warns if this looks wrong.

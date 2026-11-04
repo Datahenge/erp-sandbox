@@ -759,6 +759,11 @@ listen in containers of their own. `[frappe].gunicorn_workers` is accepted and
 ignored: `bench serve` is werkzeug, and only bench's production supervisor
 config reads it.
 
+`[frappe].watch = false` drops the Procfile's `watch:` line, saving the memory
+`bench watch` holds. Absent means true, so an older environment renders
+unchanged. Assets then change only when someone runs `erp-sandbox bench build`;
+the build step's `bench build` still produces them the first time.
+
 ### Two installers in one venv
 
 The framework and ERPNext are `setup.py` based and predate setuptools 58, which
