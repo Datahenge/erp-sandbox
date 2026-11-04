@@ -101,6 +101,25 @@ def redact(text, secrets):
     return text
 
 
+_local_env_vars = None
+
+
+def git_local_env_vars():
+    """The variables that point git at a particular repository.
+
+    A git hook exports them to everything it runs -- `git commit -a` sets
+    GIT_INDEX_FILE to its temporary index -- and a git started underneath would
+    then read and write the outer repository instead of its own. Git names its
+    own list, so it cannot drift from the installed version.
+    """
+    global _local_env_vars
+    if _local_env_vars is None:
+        _local_env_vars = subprocess.run(
+            ["git", "rev-parse", "--local-env-vars"],
+            capture_output=True, text=True).stdout.split()
+    return _local_env_vars
+
+
 class Git:
     """git, with the credential environment assembled per call."""
 
@@ -110,6 +129,8 @@ class Git:
 
     def env_for(self, credential):
         env = dict(os.environ)
+        for name in git_local_env_vars():
+            env.pop(name, None)
         env.update(NO_PROMPT)
         env.setdefault("GIT_SSH_COMMAND", SSH_COMMAND)
         # An inherited askpass would otherwise answer prompts we did not mean

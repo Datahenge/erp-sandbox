@@ -9,7 +9,12 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+- **`git commit -a` in a checkout of erp-sandbox failed the pre-commit hook**,
+  because selftest's scratch repositories inherited the commit's
+  `GIT_INDEX_FILE` and worked on its index. Every git the tool starts, `fetch`
+  included, now drops git's repository variables. The hook also runs selftest
+  unbuffered, so a traceback appears in the lines it prints.
 
 ## 0.5.3 — 2026-11-03
 

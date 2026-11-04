@@ -2296,6 +2296,21 @@ def run_fetch_secrecy(results):
         results.fail("fetch: a credential reaches git through the environment only",
                      "askpass or token missing from the environment")
 
+    # main() has already cleared these from os.environ, so set them here to
+    # stand in for a git hook's environment.
+    outer = {"GIT_INDEX_FILE": "/nonexistent/index.lock", "GIT_DIR": "/nonexistent/.git"}
+    with environment(**outer):
+        env = git.env_for(None)
+    leaked = sorted(set(outer) & set(env))
+    if "GIT_INDEX_FILE" not in fetch_apps.git_local_env_vars():
+        results.fail("fetch: a git hook's repository variables are not passed on",
+                     "git rev-parse --local-env-vars did not list GIT_INDEX_FILE")
+    elif leaked:
+        results.fail("fetch: a git hook's repository variables are not passed on",
+                     "still present: {}".format(", ".join(leaked)))
+    else:
+        results.ok("fetch: a git hook's repository variables are not passed on")
+
     # The likeliest real-world failure must explain itself.
     app = app_entry("https://example.com/acme/private.git", "main")
     hint = fetch_apps.hint_for(
@@ -2492,6 +2507,12 @@ def run_constraints_cases(results, workdir):
 
 
 def main():
+    # Run from the pre-commit hook, selftest inherits the outer commit's
+    # repository variables, and every scratch repository below would read and
+    # write the commit's index instead of its own.
+    for name in fetch_apps.git_local_env_vars():
+        os.environ.pop(name, None)
+
     results = Results()
     sample_text = SAMPLE.read_text(encoding="utf-8")
 

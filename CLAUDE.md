@@ -221,3 +221,10 @@ pointing somewhere later commands will silently inherit.
   in the developer's shell rather than in a file.
 - Commit `config.sample.toml`; `config.toml` and `.env` stay gitignored.
 - Never print a real password or token into a transcript, log, or document.
+
+### Subprocesses
+
+- **A git started by the tool runs without git's repository variables.** Go
+  through `fetch_apps.Git`, or drop `fetch_apps.git_local_env_vars()` from the
+  environment yourself. Inherited from a git hook, they point the child at the
+  outer repository's index. Mechanism: [docs/technical.md](docs/technical.md) §5.

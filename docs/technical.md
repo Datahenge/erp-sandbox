@@ -433,6 +433,15 @@ nobody is there to answer. Failures that git describes badly — a private https
 repo with no `[credentials]` entry produces only "could not read Username" —
 get a second line naming the actual cause.
 
+**Every git the tool starts drops git's repository variables** — the list
+`git rev-parse --local-env-vars` prints, through
+`fetch_apps.git_local_env_vars()`. A git hook exports them to everything it
+runs; `git commit -a` sets `GIT_INDEX_FILE` to its temporary index. A git
+inheriting them reads and writes the outer repository's index, not the one in
+its working directory. `Git.env_for` drops them for `fetch`; `selftest` drops
+them from its own environment before building scratch repositories, because it
+runs from the pre-commit hook.
+
 ### Re-running over a working tree the developer has been editing
 
 `bench/apps/` is where an ERP modification is written, and `fetch` runs on every
