@@ -142,6 +142,53 @@ def apps_block(apps):
     )
 
 
+def bench_env_file_for_compose(cfg):
+    """[bench].env_file as compose should see it, or None.
+
+    Compose resolves a relative env_file against the compose file's directory,
+    which is the environment root -- where config.toml is, and so where
+    [bench].env_file is relative to. A relative path is therefore passed
+    through unchanged, and a `~` path expanded.
+    """
+    raw = (cfg.get("bench") or {}).get("env_file")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    raw = raw.strip()
+    if raw.startswith("~"):
+        return str(Path(raw).expanduser())
+    if Path(raw).is_absolute() or raw.startswith("./"):
+        return raw
+    return "./" + raw
+
+
+def bench_env_file_block(cfg):
+    """The bench service's ``env_file:`` entry in the overlay, or nothing."""
+    path = bench_env_file_for_compose(cfg)
+    if path is None:
+        return ""
+    # json.dumps: a JSON string is a valid YAML double-quoted scalar, so any
+    # path is quoted correctly.
+    return (
+        "\n    # [bench].env_file: runtime secrets for the apps, read when the\n"
+        "    # container is created. `erp-sandbox up --recreate bench` applies a change.\n"
+        "    env_file:\n"
+        "      - {}".format(json.dumps(path))
+    )
+
+
+def bench_env_briefing_block(cfg):
+    """A note on runtime secrets for the agent briefing, or nothing."""
+    raw = (cfg.get("bench") or {}).get("env_file")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    return (
+        "\nRuntime secrets for the apps come from `{}`, loaded into the bench\n"
+        "container only. A change takes effect with `erp-sandbox up --recreate bench`;\n"
+        "`erp-sandbox restart` keeps the old values. Never print a value from it --\n"
+        "`erp-sandbox doctor` lists which names reach the container.\n".format(raw.strip())
+    )
+
+
 def debug_briefing_block(debug_port):
     """One line about debugging for the agent briefing, or nothing at all."""
     if debug_port is None:
@@ -318,6 +365,7 @@ def build_outputs(cfg, secrets, uid, gid):
             render_template("compose.{}.tmpl".format(engine), {
                 "header": comment_header(),
                 "bench_debug_ports": debug_ports_block(debug_port),
+                "bench_env_file": bench_env_file_block(cfg),
             }),
             None,
         )
@@ -389,11 +437,13 @@ def build_outputs(cfg, secrets, uid, gid):
             "header": comment_header(">"),
             "project_name": project["name"],
             "site_name": project["site"],
+            "web_host": briefing_web_host(cfg),
             "port_http": ports["http"],
             "port_mariadb": ports["mariadb"],
             "bench_container": "{}-{}".format(project["name"], SERVICE_BENCH),
             "apps_block": apps_block(apps),
             "debug_block": debug_briefing_block(debug_port),
+            "bench_env_block": bench_env_briefing_block(cfg),
         }),
         None,
     )
@@ -480,6 +530,16 @@ def output_paths(cfg):
     outputs = build_outputs(cfg, _UnresolvedSecrets(), 0, 0)
     outputs.update(asset_outputs())
     return list(outputs)
+
+
+def briefing_web_host(cfg):
+    """The host in the briefing's web URL: where nginx answers on this machine.
+
+    localhost for the loopback default, which reads better and is the same
+    address; otherwise [ports].bind, since localhost is refused there.
+    """
+    host = http_probe_host(cfg)
+    return "localhost" if host == "127.0.0.1" else host
 
 
 def all_extra_packages(stack):

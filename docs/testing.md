@@ -108,10 +108,10 @@ Run on a real VPS under Docker, the default engine (#45). **None verified yet.**
 | Config | `config.toml` parses and validates; `erp-sandbox render --check` shows no drift; every `env:` secret resolves |
 | Images | bench image exists and its build-args match the current TOML; mariadb/redis/nginx present at pinned tags |
 | Containers | all four running; healthchecks passing; restart-loop detection |
-| Connectivity | mariadb answers on the published port; redis answers internally; nginx returns HTTP 200; `/socket.io` upgrades to a websocket |
+| Connectivity | mariadb answers on the published port; redis answers internally; nginx returns HTTP 200; `/socket.io` issues a session id through nginx, at Engine.IO 4 and then 3, showing the response when neither does |
 | Layout | every relative path `docker-compose.yml` names exists in the environment — the bench build context is the one that was missed |
-| Bench | `bench version` lists every expected app at the expected ref; the site exists in `sites/`; `bench/env` is the *container's* venv and must not be activated from the host; `pip check` inside `bench/env`; the scheduler's state; and whether each app's clone on disk is the kind `config.toml` asked for (decision #31's `blobless`), which is a host-side check and answers whether or not the stack is running |
-| Database | the site user is granted at `'%'` only, so a container's changing address cannot lock it out |
+| Bench | `bench version` lists every expected app at the expected ref; every name in `[bench].env_file` is set in the bench container, checked by name without reading a value; the site exists in `sites/`; `bench/env` is the *container's* venv and must not be activated from the host; `pip check` inside `bench/env`; the scheduler's state; and whether each app's clone on disk is the kind `config.toml` asked for (decision #31's `blobless`), which is a host-side check and answers whether or not the stack is running |
+| Database | the site user is granted at `'%'`, so a container's changing address cannot lock it out. A host-specific row with the same password and privileges as `'%'` — what `bench restore` leaves for the address it connected from — is `ok`; one that differs warns. Hashes are compared in SQL and never printed |
 | Ownership | a file created **inside** the container in the bind mount lands as the host user — the single most important check under rootless podman |
 | Secrets | `config.toml` and `.erp-sandbox/` are gitignored in *this developer's* project |
 | Genericity | no client-specific string in the tool's committed tree |

@@ -133,13 +133,10 @@ FRAPPE_VERSIONS = {
         # mysqlclient has no Linux wheel and builds from source; its own README
         # names default-libmysqlclient-dev (plus pkg-config and a compiler, both
         # in the image) for Debian. WeasyPrint needs Pango and HarfBuzz at run
-        # time. `bench restore` shells out to `file` to detect an encrypted
-        # backup (frappe/commands/site.py) and fails without it; the slim
-        # base image does not carry it. Package names are bookworm's.
+        # time. Package names are bookworm's.
         "system_packages": (
             "default-libmysqlclient-dev",
             "libpango-1.0-0", "libpangoft2-1.0-0", "libharfbuzz-subset0",
-            "file",
         ),
         # Nothing known to need capping yet. A seed, so an environment can add
         # its own.

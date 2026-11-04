@@ -413,6 +413,49 @@ than shipping an app whose history works until it doesn't.
 This makes `git` and network reachability to the private host **host-side**
 prerequisites, checked in preflight.
 
+### No secret on a command line
+
+Every command line on a host is in `ps` for every user, and on a shared VPS
+(#48) that is other developers. A container's processes are host processes, so
+that covers the container's command lines too. Secrets therefore travel by
+environment or stdin:
+
+- **The seed and restore scripts** receive secrets as `export` lines prepended
+  to the script, which goes to `bash -s` on stdin (`seed_db.secret_preamble`).
+  Positional arguments carry only non-secret values.
+- **frappe** takes a root or admin password only as an option, from
+  `site_config.json`, or from a prompt. `bench_with_secrets` runs the module
+  bench itself runs — `cd sites; env/bin/python -m frappe.utils.bench_helper
+  frappe <args>` — and appends each option's value to `sys.argv` from an
+  environment variable inside the process, where `/proc/<pid>/cmdline` does not
+  see it.
+- **The mariadb client** reads `MYSQL_PWD`.
+- **`docker exec` / `podman exec`** get `-e NAME` with no value, which both
+  engines fill from the caller's environment. `-e NAME=value` would put the
+  value on the engine client's command line.
+
+### Runtime secrets for the apps
+
+The bench container receives no build or host secret. Apps that read their
+own credentials from the environment get them from **`[bench].env_file`**, a
+file of their own (decision #61):
+
+- **render** adds `env_file:` to the bench service in the generated overlay,
+  and to no other service. A relative path passes through unchanged: compose
+  resolves it against the compose file's directory, which is where
+  `config.toml` is.
+- **preflight** fails when the file is missing, does not parse, is
+  group- or world-readable, would be committed, is the `[secrets]` file, or
+  sets any name that `config.toml` reads its own secrets from or that the
+  `[secrets]` file sets. It warns on a `$` in a value, which a compose front
+  end may expand. It reports names only.
+- **doctor** runs `printenv NAME >/dev/null` per name inside the container,
+  so it reports which names arrived without any value leaving the container.
+- **An env_file is read when the container is created.** `erp-sandbox up
+  --recreate bench` passes `--force-recreate`; `restart` keeps the old values.
+- `docker inspect` / `podman inspect` show the values to anyone who can run
+  the engine as the developer — the same access as a shell in the container.
+
 ### How the token reaches git
 
 `GIT_ASKPASS` points at a five-line `sh` script written to a temporary
@@ -434,13 +477,13 @@ repo with no `[credentials]` entry produces only "could not read Username" —
 get a second line naming the actual cause.
 
 **Every git the tool starts drops git's repository variables** — the list
-`git rev-parse --local-env-vars` prints, through
-`fetch_apps.git_local_env_vars()`. A git hook exports them to everything it
-runs; `git commit -a` sets `GIT_INDEX_FILE` to its temporary index. A git
+`git rev-parse --local-env-vars` prints. A git hook exports them to everything
+it runs; `git commit -a` sets `GIT_INDEX_FILE` to its temporary index. A git
 inheriting them reads and writes the outer repository's index, not the one in
-its working directory. `Git.env_for` drops them for `fetch`; `selftest` drops
-them from its own environment before building scratch repositories, because it
-runs from the pre-commit hook.
+its working directory, and `git -C` does not override them. Every git call runs
+with `project.git_env()`: `fetch_apps.Git`, doctor's `_git`, and preflight's
+`git_would_commit`. `selftest` also drops them from its own environment before
+building scratch repositories, because it runs from the pre-commit hook.
 
 ### Re-running over a working tree the developer has been editing
 
@@ -521,6 +564,11 @@ them. Decision #39.
 
 ### Restoring inside a container
 
+`erp-sandbox restore <dump>` runs this same restore with the dump, and
+optionally the files tarballs, named on the command line instead of in
+`config.toml`. It needs `[database].encryption_key` whatever `[database].seed`
+says.
+
 Constraints on `bench restore` that apply only inside a container:
 
 - **The sequence is `drop-site` → `new-site` → `restore`.** frappe reinstalls
@@ -539,10 +587,10 @@ Constraints on `bench restore` that apply only inside a container:
   dump therefore needs its own size again in free space while restoring.
 - **Its output is captured as bytes.** The restore streams gzip past stderr, and
   decoding that as UTF-8 raises and takes the whole log with it.
-- **v16 needs the `file` command in the image.** Its restore runs `file` on the
-  backup to detect encryption and fails with `CommandFailedError` when the
-  command is absent. Slim base images do not carry it, so it is in v16's
-  `system_packages` in `known_versions.py`.
+- **The image carries the `file` command.** v15 and v16 run `file` on the
+  backup to detect encryption, and fail with `CommandFailedError` when it is
+  absent. Slim base images do not include it, so it is in the Dockerfile's base
+  package list, for every series.
 
 `site_config.json` is written **as JSON, directly**, not through
 `bench set-config`: that command rejects `--site` in either position, and passes

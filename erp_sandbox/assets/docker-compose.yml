@@ -95,9 +95,11 @@ services:
     # boot (podman 5.4.2).
     restart: unless-stopped
     environment:
-      # No credential reaches this container. The database password arrives in
-      # bench/sites/*/site_config.json, written by the seeding step, and the PAT
-      # never leaves the host at all (technical.md section 5).
+      # No build or host credential reaches this container. The database
+      # password arrives in bench/sites/*/site_config.json, written by the
+      # seeding step, and the PAT never leaves the host at all (technical.md
+      # section 5). The only secrets here are the apps' runtime secrets, from
+      # [bench].env_file, which the generated overlay adds when it is set.
       INTERNAL_MARIADB_PORT: ${INTERNAL_MARIADB_PORT}
       INTERNAL_REDIS_PORT: ${INTERNAL_REDIS_PORT}
       INTERNAL_WEB_PORT: ${INTERNAL_WEB_PORT:?unset-in-.env-run-erp-sandbox-render}

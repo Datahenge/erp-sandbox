@@ -9,7 +9,48 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
+### Added
+- **`[bench].env_file`: runtime secrets for the apps** (decision #61). A file
+  loaded into the bench container only, for credentials apps read from their
+  environment. preflight checks it is private and holds no build secret;
+  `doctor` lists which names arrived. `erp-sandbox init` now writes
+  `.erp-sandbox/bench.sample.env`; an existing environment can copy it from
+  the package's `assets/`.
+- **`erp-sandbox restore <dump>`**, with `--with-public-files` and
+  `--with-private-files`: the site step's restore, with the dump named on the
+  command line (decision #62).
+- **`erp-sandbox backup [--with-files]`**: `bench backup` for the site, listing
+  the files it wrote.
+- **`erp-sandbox up --recreate`**, which applies a changed `env_file`.
+
+### Security
+- **No secret on a command line any more** (decision #62). `seed`, the site
+  step, `restore`, `erp-sandbox mariadb` and doctor's grant check passed the
+  MariaDB root password, the admin password or the encryption key as
+  arguments, where `ps` shows them to every user on the host. They now travel
+  by stdin and environment.
+
+### Changed
+- **doctor's disk check follows decision #60** too: 10 GB once built.
+- **`file` is in the bench image for every series**, not only v16 (decision
+  #59). Picked up with `erp-sandbox render` then `erp-sandbox build --only image`.
+- **preflight passes on a built, running environment.** A port held by the
+  environment's own container is no longer a collision, and once `bench/env`
+  exists, low disk space warns below 10 GB rather than failing below 20 GB
+  (decision #60).
+
 ### Fixed
+- **doctor: every app reported missing on bench 5.31**, whose `bench version`
+  prints four fields per app.
+- **doctor: socket.io warned on a working v16 site.** The probe now tries
+  Engine.IO 4, then 3, and shows the server's response when neither answers.
+- **doctor: a restore's host-specific grant always warned.** A row with the
+  same password and privileges as `'%'` is now `ok`; one that differs still
+  warns.
+- **The agent briefing's web URL ignored `[ports].bind`**, naming
+  `localhost` where nothing listens. Picked up with `erp-sandbox render`.
+- **doctor and preflight** now also run git without the repository variables
+  a git hook passes on.
 - **`git commit -a` in a checkout of erp-sandbox failed the pre-commit hook**,
   because selftest's scratch repositories inherited the commit's
   `GIT_INDEX_FILE` and worked on its index. Every git the tool starts, `fetch`

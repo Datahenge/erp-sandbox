@@ -14,14 +14,14 @@ container.
 | | |
 |---|---|
 | Site | `@@{site_name}` |
-| Web | `http://localhost:@@{port_http}` |
+| Web | `http://@@{web_host}:@@{port_http}` |
 | MariaDB | `127.0.0.1:@@{port_mariadb}` |
 | Bench container | `@@{bench_container}` |
 
 Apps, in install order:
 
 @@{apps_block}
-@@{debug_block}
+@@{debug_block}@@{bench_env_block}
 ## Running things
 
 `erp-sandbox` works from anywhere in this tree. `erp-sandbox --help` lists every

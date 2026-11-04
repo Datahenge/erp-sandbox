@@ -16,6 +16,7 @@ describes, and that gap is where a confusing afternoon comes from.
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from pathlib import Path
 from erp_sandbox import known_versions, project, render
 from erp_sandbox.preflight import (
     MIN_FREE_GB,
+    MIN_FREE_GB_BUILT,
     MIN_PYTHON,
     ConfigError,
     SECRETS_BUILD,
@@ -35,9 +37,12 @@ from erp_sandbox.preflight import (
     debug_settings,
     detect_engine,
     detect_ids,
+    bench_env_file_path,
     free_gb,
     http_probe_host,
+    is_built,
     load_config,
+    parse_env_file,
     pip_constraints,
     resolve_all_secrets,
     series_warnings,
@@ -106,13 +111,19 @@ class Doctor:
 # Engine helpers
 # ---------------------------------------------------------------------------
 
-def _run(command, timeout=30):
+def _run(command, timeout=30, env=None):
     """(returncode, stdout) with stderr folded in. Never raises."""
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
+                                env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, str(exc)
     return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def _git(args, timeout=30):
+    """_run for git, without the repository variables a git hook would pass on."""
+    return _run(["git"] + list(args), timeout=timeout, env=project.git_env())
 
 
 def _inspect(engine, name, fmt):
@@ -145,11 +156,14 @@ def check_host(doc, root):
     doc.ok("Host", "container engine", "{} with {!r}\n{}".format(engine, compose, ver.strip()))
 
     gb = free_gb(root)
-    if gb >= MIN_FREE_GB:
+    # The same two thresholds as preflight (decision #60), but only ever a
+    # warning: doctor diagnoses, and a full disk is not a broken environment.
+    minimum = MIN_FREE_GB_BUILT if is_built(root) else MIN_FREE_GB
+    if gb >= minimum:
         doc.ok("Host", "disk space", "{:.1f} GB free at {}".format(gb, root))
     else:
         doc.warn("Host", "disk space",
-                 "{:.1f} GB free at {}, below the {} GB minimum".format(gb, root, MIN_FREE_GB))
+                 "{:.1f} GB free at {}, below the {} GB minimum".format(gb, root, minimum))
     return engine, compose
 
 
@@ -434,15 +448,36 @@ def check_connectivity(doc, cfg, root):
 
     # Risk 8: the route that is easy to get subtly wrong, and whose failure
     # looks like an application bug.
-    sio = "http://{}/socket.io/?EIO=3&transport=polling".format(web)
-    body = _http_body(sio)
-    if body and '"sid"' in body:
-        doc.ok("Connectivity", "socket.io answers through nginx", "a session id was issued")
+    version, body = socketio_probe(web)
+    if version:
+        doc.ok("Connectivity", "socket.io answers through nginx",
+               "a session id was issued (EIO={})".format(version))
     else:
         doc.warn("Connectivity", "socket.io answers through nginx",
                  "no session id in the response -- realtime will be dead and it "
-                 "will look like an application bug",
+                 "will look like an application bug\n"
+                 "response: {}".format(body.strip()[:200] if body else "none"),
                  "erp-sandbox logs bench")
+
+
+# Engine.IO protocol versions, newest first. frappe v16's socket.io server
+# answers EIO=3 with "Unsupported protocol version"; older series speak 3.
+ENGINE_IO_VERSIONS = (4, 3)
+
+
+def socketio_probe(web, fetch=None):
+    """(version, body): the first Engine.IO version that issues a session id.
+
+    version is None when none did, and body is then the last response, so the
+    reason is visible rather than just its absence.
+    """
+    fetch = fetch or _http_body
+    body = None
+    for version in ENGINE_IO_VERSIONS:
+        body = fetch("http://{}/socket.io/?EIO={}&transport=polling".format(web, version))
+        if body and '"sid"' in body:
+            return version, body
+    return None, body
 
 
 def _port_open(host, port, timeout=3):
@@ -464,11 +499,78 @@ def _http_status(url, timeout=10):
 
 
 def _http_body(url, timeout=10):
+    """The first 400 bytes of the response, error responses included; None if no answer.
+
+    An error's body is kept because it is usually the explanation -- Engine.IO
+    rejects an old protocol version with a 400 whose body says so.
+    """
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.read(400).decode("utf-8", errors="replace")
-    except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.read(400).decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+    except (urllib.error.URLError, OSError):
         return None
+
+
+def parse_bench_version(out):
+    """{app: version} from `bench version`.
+
+    Older bench prints `frappe 12.26.0`; bench 5.31 adds the branch and short
+    hash, `frappe 16.25.0 HEAD (9a8daf3)`. The first two fields are the same in
+    both. Any other line is harmless: only the names in config.toml are looked up.
+    """
+    installed = {}
+    for line in out.split("\n"):
+        parts = line.split()
+        if len(parts) >= 2:
+            installed[parts[0]] = parts[1]
+    return installed
+
+
+def check_bench_env(doc, engine, cfg, config_path):
+    """
+    Which [bench].env_file names reach the bench container. Names only.
+
+    `printenv NAME >/dev/null` inside the container answers set-or-not, so no
+    value crosses into this process, let alone into the report.
+    """
+    path = bench_env_file_path(cfg, config_path)
+    if path is None:
+        return
+    try:
+        names, problems = parse_env_file(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        doc.warn("Bench", "[bench].env_file reaches the container",
+                 "{} could not be read: {}".format(path, exc), "erp-sandbox preflight")
+        return
+    if problems:
+        doc.warn("Bench", "[bench].env_file reaches the container",
+                 "{} does not parse".format(path), "erp-sandbox preflight")
+        return
+    if not names:
+        doc.ok("Bench", "[bench].env_file reaches the container", "{} sets nothing".format(path))
+        return
+    container = "{}-bench".format(cfg["project"]["name"])
+    code, out = _run([engine, "exec", container, "sh", "-c",
+                      'for n; do printenv "$n" >/dev/null && echo "$n"; done', "sh"]
+                     + sorted(names))
+    if code not in (0, 1):
+        doc.warn("Bench", "[bench].env_file reaches the container", out.strip()[:200])
+        return
+    present = set(out.split())
+    missing = sorted(set(names) - present)
+    if missing:
+        doc.warn("Bench", "[bench].env_file reaches the container",
+                 "set in {} but not in {}: {}\nan env_file is read when the container "
+                 "is created".format(path.name, container, ", ".join(missing)),
+                 "erp-sandbox render && erp-sandbox up --recreate bench")
+    else:
+        doc.ok("Bench", "[bench].env_file reaches the container",
+               ", ".join(sorted(present)))
 
 
 def check_bench(doc, engine, cfg, root):
@@ -498,11 +600,7 @@ def check_bench(doc, engine, cfg, root):
         doc.warn("Bench", "bench version answers", out.strip()[:400],
                  "erp-sandbox logs bench")
         return
-    installed = {}
-    for line in out.split("\n"):
-        parts = line.split()
-        if len(parts) == 2:
-            installed[parts[0]] = parts[1]
+    installed = parse_bench_version(out)
     missing = [a["name"] for a in cfg["apps"] if a["name"] not in installed]
     if missing:
         doc.warn("Bench", "every app in config.toml is installed",
@@ -517,7 +615,7 @@ def check_bench(doc, engine, cfg, root):
         path = Path(root) / "bench" / "apps" / app["name"]
         if not (path / ".git").exists():
             continue
-        code, out = _run(["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"])
+        code, out = _git(["-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"])
         actual = out.strip() if code == 0 else "?"
         if actual not in (app["ref"], "HEAD"):
             doc.warn("Bench", "{} is on the configured ref".format(app["name"]),
@@ -696,36 +794,102 @@ def check_database_grants(doc, engine, cfg, root, config_path):
         return
 
     container = "{}-mariadb".format(cfg["project"]["name"])
-    # MYSQL_PWD rather than -p on the command line, which would be visible in
-    # the container's process list for the life of the call.
-    code, out = _run([
-        engine, "exec", "-e", "MYSQL_PWD=" + secrets["database.root_password"], container,
-        # MariaDB 11 images have only `mariadb`; the oldest supported only `mysql`.
-        "sh", "-c", 'exec "$(command -v mariadb || command -v mysql)" "$@"', "sh",
-        "-uroot", "-N", "-B", "-e",
-        "select host from mysql.user where user='{}' order by host".format(db_name),
-    ])
+
+    def query(sql):
+        # MYSQL_PWD rather than -p, and `-e MYSQL_PWD` with no value, which the
+        # engine fills from this process's environment: the password is then in
+        # no command line, the engine client's included.
+        return _run([
+            engine, "exec", "-e", "MYSQL_PWD", container,
+            # MariaDB 11 images have only `mariadb`; the oldest supported only `mysql`.
+            "sh", "-c", 'exec "$(command -v mariadb || command -v mysql)" "$@"', "sh",
+            "-uroot", "-N", "-B", "-e", sql,
+        ], env=dict(os.environ, MYSQL_PWD=secrets["database.root_password"]))
+
+    # The password comparison happens in SQL, so no hash leaves the server.
+    # same_password is 1, 0, or NULL when there is no '%' row to compare with.
+    code, out = query(
+        "select host, authentication_string = (select authentication_string "
+        "from mysql.user where user='{0}' and host='%') "
+        "from mysql.user where user='{0}' order by host".format(db_name))
     if code != 0:
         doc.warn("Database", "grants for the site user could not be read",
                  out.strip()[:200])
         return
 
-    hosts = [h.strip() for h in out.split("\n") if h.strip()]
-    extra = [h for h in hosts if h != "%"]
+    rows = [line.split("\t") for line in out.split("\n") if line.strip()]
+    hosts = [row[0] for row in rows]
+    extra = [row for row in rows if row[0] != "%"]
     if not hosts:
         doc.warn("Database", "the site's database user exists",
                  "no grant found for {}".format(db_name), "erp-sandbox seed --force")
-    elif extra:
-        doc.warn("Database", "the site user has host-specific grants",
-                 "{} row(s) besides '%': {}\n"
-                 "one of these will win over '%' when the bench lands on that "
-                 "address, with whatever password it was created with"
-                 .format(len(extra), ", ".join(extra[:6])),
+        return
+    if not extra:
+        doc.ok("Database", "the site user is granted at '%' only",
+               "{} -- survives a container address change".format(db_name))
+        return
+
+    grants = {}
+    for host in ["%"] + [row[0] for row in extra]:
+        code, out = query("show grants for '{}'@'{}'".format(db_name, host))
+        grants[host] = out if code == 0 else None
+    risky = risky_host_grants(db_name, rows, grants)
+    if risky:
+        doc.warn("Database", "the site user has host-specific grants that differ from '%'",
+                 "\n".join("{}: {}".format(host, why) for host, why in risky[:6]) + "\n"
+                 "a row like this wins over '%' when the bench lands on that "
+                 "address, with its own password and privileges",
                  "erp-sandbox seed --force, or delete them: "
                  "delete from mysql.user where user='{}' and host<>'%'".format(db_name))
     else:
-        doc.ok("Database", "the site user is granted at '%' only",
-               "{} -- survives a container address change".format(db_name))
+        doc.ok("Database", "the site user's host-specific grants match '%'",
+               "{} row(s) besides '%': {} -- created by a restore for the address it "
+               "connected from; same password and privileges as '%'"
+               .format(len(extra), ", ".join(row[0] for row in extra[:6])))
+
+
+_IDENTIFIED = re.compile(r"\s+IDENTIFIED\s+(BY|VIA|WITH)\b.*$", re.IGNORECASE)
+
+
+def _grant_lines(text, user, host):
+    """SHOW GRANTS output as a set, with the host made generic and credentials removed.
+
+    The password is compared separately, in SQL. Removing the IDENTIFIED clause
+    here also keeps a hash out of anything this function's result reaches.
+    """
+    lines = set()
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        line = line.replace("'{}'@'{}'".format(user, host), "'{}'@<host>".format(user))
+        line = line.replace("`{}`@`{}`".format(user, host), "`{}`@<host>".format(user))
+        lines.add(_IDENTIFIED.sub("", line))
+    return lines
+
+
+def risky_host_grants(user, rows, grants):
+    """[(host, reason)] for each non-'%' row that differs from the '%' row.
+
+    rows: (host, same_password) pairs from mysql.user, same_password being
+    "1", "0" or "NULL". grants: SHOW GRANTS text per host, None if unreadable.
+    """
+    base = grants.get("%")
+    risky = []
+    for row in rows:
+        host = row[0]
+        if host == "%":
+            continue
+        same_password = row[1] if len(row) > 1 else "NULL"
+        if same_password != "1":
+            risky.append((host, "no '%' row to compare with" if same_password == "NULL"
+                          else "a different password from '%'"))
+        elif base is None or grants.get(host) is None:
+            risky.append((host, "its privileges could not be read"))
+        elif _grant_lines(grants[host], user, host) != _grant_lines(base, user, "%"):
+            risky.append((host, "different privileges from '%'"))
+    return risky
+
 
 
 def check_ownership(doc, engine, cfg, root):
@@ -814,10 +978,10 @@ def check_app_clones(doc, cfg, root):
             continue
         label = "{} clone kind".format(name)
         wanted = bool(app.get("blobless"))
-        code, out = _run(["git", "-C", str(path), "config", "--get",
+        code, out = _git(["-C", str(path), "config", "--get",
                           "remote.origin.partialclonefilter"])
         actual = out.strip() if code == 0 else ""
-        _, sizes = _run(["git", "-C", str(path), "count-objects", "-vH"])
+        _, sizes = _git(["-C", str(path), "count-objects", "-vH"])
         pack = "size unknown"
         for line in sizes.splitlines():
             if line.startswith("size-pack:"):
@@ -854,7 +1018,7 @@ def check_secrets_not_committed(doc, root):
     be committed is `.erp-sandbox/`, which holds the resolved secrets, and in most
     cases config.toml itself, which may hold literals.
     """
-    code, _ = _run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"])
+    code, _ = _git(["-C", str(root), "rev-parse", "--is-inside-work-tree"])
     if code != 0:
         doc.ok("Secrets", "environment is not in git", "nothing here can be committed")
         return
@@ -863,13 +1027,13 @@ def check_secrets_not_committed(doc, root):
         target = Path(root) / name
         if not target.exists():
             continue
-        code, out = _run(["git", "-C", str(root), "ls-files", "--error-unmatch", name])
+        code, out = _git(["-C", str(root), "ls-files", "--error-unmatch", name])
         if code == 0:
             doc.bad("Secrets", "{} is tracked by git".format(name),
                     "it holds credentials or client values and is committed",
                     "git rm --cached -r {} && echo '/{}' >> .gitignore".format(name, name))
             continue
-        code, _ = _run(["git", "-C", str(root), "check-ignore", "-q", name])
+        code, _ = _git(["-C", str(root), "check-ignore", "-q", name])
         if code == 0:
             doc.ok("Secrets", "{} is gitignored".format(name))
         else:
@@ -889,14 +1053,14 @@ def check_genericity(doc, root):
     act on.
     """
     repo_root = project.PACKAGE_ROOT.parent
-    code, _ = _run(["git", "-C", str(repo_root), "rev-parse", "--is-inside-work-tree"])
+    code, _ = _git(["-C", str(repo_root), "rev-parse", "--is-inside-work-tree"])
     if code != 0:
         doc.ok("Genericity", "not applicable",
                "erp-sandbox is installed rather than run from a checkout, so there "
                "is no committed tool tree to check")
         return
 
-    code, out = _run(["git", "-C", str(repo_root), "ls-files"], timeout=30)
+    code, out = _git(["-C", str(repo_root), "ls-files"], timeout=30)
     if code != 0:
         doc.ok("Genericity", "not applicable", "no committed tool tree to check")
         return
@@ -959,6 +1123,7 @@ def run(root, config_path, skip_containers=False):
         check_connectivity(doc, cfg, root)
         if running:
             check_bench(doc, engine, cfg, root)
+            check_bench_env(doc, engine, cfg, config_path)
             check_dependency_conflicts(doc, engine, cfg)
             check_debug(doc, engine, cfg, root)
             check_scheduler(doc, engine, cfg)

@@ -50,4 +50,4 @@ services:
   bench:
     restart: always
     userns_mode: keep-id
-    user: "${HOST_UID:?run-erp-sandbox-render-first}:${HOST_GID:?run-erp-sandbox-render-first}"@@{bench_debug_ports}
+    user: "${HOST_UID:?run-erp-sandbox-render-first}:${HOST_GID:?run-erp-sandbox-render-first}"@@{bench_debug_ports}@@{bench_env_file}

@@ -57,7 +57,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from erp_sandbox import known_versions
+from erp_sandbox import known_versions, project
 from urllib.parse import urlsplit
 
 # Re-exported deliberately. render, fetch_apps, seed_db, doctor and cli all
@@ -76,6 +76,11 @@ from erp_sandbox.project import (  # noqa: F401
 # Free space needed for images, a bench tree, and a database.  A full v12
 # bench with built assets is several GB before any client data lands in it.
 MIN_FREE_GB = 20
+
+# Once bench/env exists those are already on disk, and what is left to need
+# space is growth: a rebuilt image layer, a restore (which needs its dump's size
+# again while it decompresses), logs. Below this, warn; never fail.
+MIN_FREE_GB_BUILT = 10
 
 SEED_MODES = ("new_site", "sql_dump", "frappe_backup")
 
@@ -605,6 +610,26 @@ def validate(cfg):
                     .format(DEFAULT_SECRETS_FILE)
                 )
 
+    # --- [bench] : optional ------------------------------------------------
+    bench_section = cfg.get("bench")
+    if bench_section is not None:
+        if not isinstance(bench_section, dict):
+            problems.append("[bench] must be a table")
+        else:
+            for key in sorted(set(bench_section) - {"env_file"}):
+                problems.append("bench.{} is not a recognised key".format(key))
+            env_file = bench_section.get("env_file")
+            if env_file is not None and not isinstance(env_file, str):
+                problems.append("bench.env_file must be a string")
+            elif isinstance(env_file, str):
+                if not env_file.strip():
+                    problems.append("bench.env_file is empty; remove it to load no file")
+                elif Path(env_file.strip()).name == ".env":
+                    problems.append(
+                        "bench.env_file cannot be '.env'; render.py generates that file "
+                        "for compose and overwrites it on every render. Use a different "
+                        "name, such as {!r}.".format(DEFAULT_BENCH_ENV_FILE))
+
     # --- unfilled placeholders ---------------------------------------------
     problems.extend(find_placeholders(cfg))
 
@@ -857,6 +882,12 @@ def repo_remote(repo):
 
 DEFAULT_SECRETS_FILE = ".erp-sandbox/secrets.env"
 
+# [bench].env_file: runtime secrets for the bench container, and only those
+# (technical.md section 5). Never the secrets file above, which holds the build
+# and host secrets -- the PAT, the MariaDB root password -- that would otherwise
+# sit in the environment of every bench process, `bench console` included.
+DEFAULT_BENCH_ENV_FILE = ".erp-sandbox/bench.env"
+
 SOURCE_SHELL = "shell"
 SOURCE_LITERAL = "config.toml"
 
@@ -879,6 +910,29 @@ def secrets_file_path(cfg, config_path):
     if not path.is_absolute():
         path = Path(config_path).resolve().parent / path
     return path, explicit
+
+
+def bench_env_file_path(cfg, config_path):
+    """[bench].env_file as an absolute Path, or None when it is not set.
+
+    Relative to the directory holding config.toml, like [secrets].file.
+    """
+    raw = (cfg.get("bench") or {}).get("env_file")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    path = Path(raw.strip()).expanduser()
+    if not path.is_absolute():
+        path = Path(config_path).resolve().parent / path
+    return path
+
+
+def config_env_names(cfg):
+    """The NAMEs of every env:NAME secret reference in config.toml."""
+    names = set()
+    for _name, value in secret_fields(cfg):
+        if isinstance(value, str) and value.startswith("env:") and value[4:].strip():
+            names.add(value[4:].strip())
+    return names
 
 
 def parse_env_file(text):
@@ -1469,6 +1523,69 @@ def free_gb(path):
     return usage.free / (1024 ** 3)
 
 
+def is_built(root):
+    """True once the bench step has run: bench/env exists.
+
+    lexists, because bench/env/bin/python links to the container's interpreter
+    and does not resolve on the host (decision #22).
+    """
+    return os.path.lexists(Path(root) / "bench" / "env" / "bin" / "python")
+
+
+def check_disk(report, root, gb):
+    """20 GB before the first build; once built, a warning below 10 GB."""
+    if not is_built(root):
+        if gb >= MIN_FREE_GB:
+            report.ok("disk space", "{:.1f} GB free at {}".format(gb, root))
+        else:
+            report.fail("disk space",
+                        "{:.1f} GB free at {}; at least {} GB is needed for images, "
+                        "the bench tree, and the database".format(gb, root, MIN_FREE_GB))
+    elif gb >= MIN_FREE_GB_BUILT:
+        report.ok("disk space", "{:.1f} GB free at {} (already built)".format(gb, root))
+    else:
+        report.warn("disk space",
+                    "{:.1f} GB free at {}; the environment is built, but a restore "
+                    "needs its dump's size again while it decompresses, and below "
+                    "{} GB that is easy to run out of".format(gb, root, MIN_FREE_GB_BUILT))
+
+
+# "127.0.0.1:8101->80/tcp" and "[::]:8101->80/tcp", from `ps --format {{.Ports}}`.
+_PUBLISHED_PORT = re.compile(r":(\d+)->")
+
+
+def parse_port_holders(ps_output, project_name):
+    """{host port: container name} for this project's containers.
+
+    ps_output is `<engine> ps --format '{{.Names}}\t{{.Ports}}'`. A container is
+    this project's when its name is `<project>-<service>`, the container_name
+    every service in the compose file sets.
+    """
+    holders = {}
+    prefix = project_name + "-"
+    for line in ps_output.split("\n"):
+        name, _, ports = line.partition("\t")
+        name = name.strip()
+        if not name.startswith(prefix):
+            continue
+        for port in _PUBLISHED_PORT.findall(ports):
+            holders[int(port)] = name
+    return holders
+
+
+def own_port_holders(engine, project_name):
+    """parse_port_holders for the running engine; empty if it cannot be asked."""
+    try:
+        result = subprocess.run(
+            [engine, "ps", "--format", "{{.Names}}\t{{.Ports}}"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode != 0:
+        return {}
+    return parse_port_holders(result.stdout, project_name)
+
+
 # ---------------------------------------------------------------------------
 # The command
 # ---------------------------------------------------------------------------
@@ -1506,6 +1623,94 @@ class Report:
                     stream.write("       {}\n".format(line))
 
 
+def check_private_file(report, label, path):
+    """
+    Mode 600, and nothing git would commit.
+
+    A file of secrets is only as private as its permissions and its gitignore
+    status. Both failures are silent until they are not.
+    """
+    mode = path.stat().st_mode & 0o777
+    if mode & 0o077:
+        report.fail(
+            "{} is readable by others".format(label),
+            "{} is mode {:o}; run: chmod 600 {}".format(path, mode, path),
+        )
+    else:
+        report.ok("{} permissions".format(label), "mode {:o}".format(mode))
+
+    tracked = git_would_commit(path)
+    if tracked is None:
+        # Not a git working tree. There is nothing here that could commit
+        # the file, so this is a correct state rather than an unknown one.
+        # Warning about it in a freshly created environment -- which is the
+        # normal case -- teaches developers to ignore warnings.
+        report.ok("{} cannot be committed".format(label),
+                  "this environment is not a git working tree")
+    elif tracked:
+        report.fail(
+            "{} is not gitignored".format(label),
+            "git would commit {}. Add it to .gitignore before doing anything "
+            "else.".format(path),
+        )
+    else:
+        report.ok("{} is gitignored".format(label))
+
+
+def check_bench_env_file(report, cfg, config_path):
+    """
+    [bench].env_file: private, parseable, and holding none of the build secrets.
+
+    Names only, in everything reported. The values are read to be parsed and
+    for nothing else.
+    """
+    path = bench_env_file_path(cfg, config_path)
+    if path is None:
+        report.ok("bench env file", "none; the bench container receives no secrets")
+        return
+    label = "bench env file"
+    if not path.is_file():
+        report.fail(label, "[bench].env_file points at {} but there is no such file. "
+                           "Start from {}.".format(path, project.SAMPLE_BENCH_ENV.name))
+        return
+    secrets_path, _explicit = secrets_file_path(cfg, config_path)
+    if secrets_path is not None and secrets_path.resolve() == path.resolve():
+        report.fail(label, "[bench].env_file is the [secrets] file, {}. That file "
+                           "holds build and host secrets -- the PAT, the MariaDB root "
+                           "password -- and must not reach the container. Use a "
+                           "file of its own.".format(path))
+        return
+    values, problems = parse_env_file(path.read_text(encoding="utf-8"))
+    if problems:
+        report.fail(label, "{}:\n{}".format(path, "\n".join(problems)))
+        return
+    report.ok(label, "{}: {}".format(path, ", ".join(sorted(values)) or "no variables"))
+    check_private_file(report, label, path)
+
+    try:
+        build_names, _path = load_secrets_file(cfg, config_path)
+    except ConfigError:
+        build_names = {}
+    shared = sorted((set(build_names) | config_env_names(cfg)) & set(values))
+    if shared:
+        report.fail("bench env file holds build secrets",
+                    "{}: also a name config.toml reads its own secrets from. Build "
+                    "and host secrets stay out of the container; remove from {}."
+                    .format(", ".join(shared), path))
+    else:
+        report.ok("bench env file holds no build secrets")
+
+    # parse_env_file never expands $, but a compose front end reading env_file
+    # may; then the container would see a different value than this file says.
+    dollar = sorted(name for name, value in values.items() if "$" in value)
+    if dollar:
+        report.warn("bench env file: a value contains '$'",
+                    "{}: a compose front end may expand it. Compare its length "
+                    "inside the container, never the value: erp-sandbox shell, "
+                    "then printenv NAME | wc -c"
+                    .format(", ".join(dollar)))
+
+
 def check_secrets(report, cfg, config_path):
     """Resolve every secret, and make sure the file holding them is safe to keep."""
     try:
@@ -1518,33 +1723,7 @@ def check_secrets(report, cfg, config_path):
         report.ok("secrets file", "none in use; env: references come from the shell")
     else:
         report.ok("secrets file", "{} ({} variable(s))".format(path, len(file_values)))
-        # A secrets file is only as private as its permissions and its
-        # gitignore status. Both failures are silent until they are not.
-        mode = path.stat().st_mode & 0o777
-        if mode & 0o077:
-            report.fail(
-                "secrets file is readable by others",
-                "{} is mode {:o}; run: chmod 600 {}".format(path, mode, path),
-            )
-        else:
-            report.ok("secrets file permissions", "mode {:o}".format(mode))
-
-        tracked = git_would_commit(path)
-        if tracked is None:
-            # Not a git working tree. There is nothing here that could commit
-            # the file, so this is a correct state rather than an unknown one.
-            # Warning about it in a freshly created environment -- which is the
-            # normal case -- teaches developers to ignore warnings.
-            report.ok("secrets file cannot be committed",
-                      "this environment is not a git working tree")
-        elif tracked:
-            report.fail(
-                "secrets file is not gitignored",
-                "git would commit {}. Add it to .gitignore before doing anything "
-                "else.".format(path),
-            )
-        else:
-            report.ok("secrets file is gitignored")
+        check_private_file(report, "secrets file", path)
 
     source = SecretSource(file_values, path)
     try:
@@ -1573,7 +1752,7 @@ def git_would_commit(path):
         result = subprocess.run(
             ["git", "check-ignore", "-q", str(path)],
             cwd=str(path.parent), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, timeout=20,
+            stderr=subprocess.DEVNULL, timeout=20, env=project.git_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1617,13 +1796,7 @@ def run_checks(config_path, skip_engine=False, skip_ports=False, skip_images=Fal
         else:
             report.ok("container engine", "{} with '{}'".format(engine, compose))
 
-    gb = free_gb(root)
-    if gb >= MIN_FREE_GB:
-        report.ok("disk space", "{:.1f} GB free at {}".format(gb, root))
-    else:
-        report.fail("disk space",
-                    "{:.1f} GB free at {}; at least {} GB is needed for images, "
-                    "the bench tree, and the database".format(gb, root, MIN_FREE_GB))
+    check_disk(report, root, free_gb(root))
 
     # --- config ------------------------------------------------------------
     try:
@@ -1649,6 +1822,7 @@ def run_checks(config_path, skip_engine=False, skip_ports=False, skip_images=Fal
                   else "none (stack.pip_constraints is empty)")
 
     check_secrets(report, cfg, config_path)
+    check_bench_env_file(report, cfg, config_path)
 
     if not skip_engine and engine is not None:
         check_engine_mode(report, cfg, engine)
@@ -1658,10 +1832,19 @@ def run_checks(config_path, skip_engine=False, skip_ports=False, skip_images=Fal
         report.warn("port check skipped", "--skip-ports")
     else:
         # Risk 12: check before any work, not partway through a 30 minute build.
+        holders = None
         for label, port in wanted_ports(cfg):
             host = http_bind(cfg) if label == "ports.http" else "127.0.0.1"
             if port_is_free(port, host):
                 report.ok("{} = {} is free".format(label, port))
+                continue
+            # A running environment holds its own ports; that is not a collision.
+            if holders is None:
+                holders = (own_port_holders(engine, cfg["project"]["name"])
+                           if engine else {})
+            if port in holders:
+                report.ok("{} = {} is held by this environment".format(label, port),
+                          holders[port])
             else:
                 report.fail(
                     "{} = {} is already in use".format(label, port),

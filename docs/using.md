@@ -19,6 +19,10 @@ erp-sandbox mariadb                # a mysql client on the site database
 erp-sandbox mariadb -e "select 1"  # ...or a scripted query
 erp-sandbox ps
 erp-sandbox doctor
+
+erp-sandbox backup --with-files    # bench backup; the files land under bench/sites/
+erp-sandbox restore <dump> --force # replace the site with a dump
+erp-sandbox up --recreate bench    # apply a changed [bench].env_file
 ```
 
 - `erp-sandbox --help` lists every verb.
@@ -79,12 +83,27 @@ What happens to what:
 
 ## Restoring a SQL dump
 
-A dump is restored by the **site step**, not by hand. It drops the site's
-database, recreates it, streams the dump in, installs the encryption key and
-runs `bench migrate`.
+A dump is restored by **erp-sandbox**, not by `bench restore` directly. It drops
+the site's database, recreates it, streams the dump in, installs the encryption
+key, removes the extra database grant the restore leaves, and runs
+`bench migrate`. It also supplies the MariaDB root password without putting it
+on any command line.
+
+**A one-off restore:**
 
 1. Put the dump on your own disk, named `*.sql` or `*.sql.gz`. Frappe decides
    whether to decompress from the suffix alone.
+2. Set `[database].encryption_key` in `config.toml` to the dump's key.
+3. ```sh
+   erp-sandbox restore ~/dumps/acme-database.sql.gz --force
+   ```
+
+   Add `--with-public-files <tar>` and `--with-private-files <tar>` to restore
+   the files too. `--dry-run` shows what would run.
+
+**A restore every build repeats**, so `erp-sandbox build` seeds from it:
+
+1. Put the dump on your own disk, named `*.sql` or `*.sql.gz`.
 2. In `config.toml`:
 
    ```toml
@@ -101,9 +120,9 @@ runs `bench migrate`.
    A first build runs the same step; `--force` is only needed once a site
    exists.
 
-- **`--force` drops the current site's database.** It is the one destructive
-  command in the tool, and it re-runs cleanly — a bad restore is one
-  `erp-sandbox seed --force` from another attempt.
+- **`--force` drops the current site's database.** `seed` and `restore` are the
+  destructive commands in the tool, and both re-run cleanly — a bad restore is
+  one more run from another attempt.
 - **`encryption_key` must be the one the dump was taken with.** The step
   refuses to run without a key, but a *wrong* key is never reported: the site
   loads, logins work, and every stored password in it is unreadable.
@@ -129,6 +148,46 @@ gunzip -c some.sql.gz | erp-sandbox mariadb
 That is a plain `mysql` session on the site's own database. It does not write
 `site_config.json` and does not run `bench migrate`, so it is not a way to
 restore a whole site.
+
+## Backing up
+
+```sh
+erp-sandbox backup                # the database
+erp-sandbox backup --with-files   # and the public and private files
+```
+
+- It runs `bench backup` in the running bench container and lists the files it
+  wrote, under `bench/sites/<site>/private/backups/` on this host.
+- `erp-sandbox restore` takes those files back.
+
+## Runtime secrets for the apps
+
+Apps that read a credential from their environment — an API key, an object
+store's key pair — get it from a file of its own, loaded into the bench
+container only.
+
+1. `cp .erp-sandbox/bench.sample.env .erp-sandbox/bench.env`
+2. `chmod 600 .erp-sandbox/bench.env`
+3. Fill in the variables, `KEY=value`, one per line.
+4. In `config.toml`:
+
+   ```toml
+   [bench]
+   env_file = ".erp-sandbox/bench.env"
+   ```
+
+5. `erp-sandbox render`
+6. `erp-sandbox up --recreate bench`
+
+- **A change to the file needs step 6 again.** An env_file is read when the
+  container is created; `erp-sandbox restart` keeps the old values.
+- **Never put build secrets in it.** The PAT, the root and admin passwords stay
+  in `secrets.env`. preflight fails if `bench.env` uses any name `config.toml`
+  reads a secret from.
+- `erp-sandbox doctor` lists which of the file's names reach the container —
+  names only, never values.
+- Anyone who can run docker or podman as you can read the values with
+  `inspect`. That is the same access as a shell in the container.
 
 ## Resetting the Administrator password
 

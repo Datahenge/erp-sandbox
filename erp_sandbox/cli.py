@@ -165,6 +165,61 @@ def cmd_seed(args):
     return seed_db.main(argv)
 
 
+def cmd_restore(args):
+    """
+    Restore a dump given on the command line, replacing the site.
+
+    The site step's restore path -- drop, recreate, restore, re-key, prune the
+    grants the restore leaves, migrate -- with the dump named here rather than
+    in config.toml. Running `bench restore` directly skips the grant pruning
+    and the version comparison (#39), and needs the root password typed or on a
+    command line.
+    """
+    root = require_project(args)
+    argv = ["--config", str(require_config(root)), "--root", str(root),
+            "--dump", args.dump]
+    if args.with_public_files:
+        argv += ["--public-files", args.with_public_files]
+    if args.with_private_files:
+        argv += ["--private-files", args.with_private_files]
+    if args.force:
+        argv.append("--force")
+    if args.dry_run:
+        argv.append("--dry-run")
+    return seed_db.main(argv)
+
+
+def backup_command(engine, container, site, with_files):
+    """The argv for `bench backup` in the running bench container."""
+    command = [engine, "exec", container, "bench", "--site", site, "backup"]
+    if with_files:
+        command.append("--with-files")
+    return command
+
+
+def cmd_backup(args):
+    """`bench backup` for this environment's site, and where the files landed."""
+    import time
+
+    root = require_project(args)
+    site = _site(root)
+    engine, _compose = engine_or_fail()
+    started = time.time()
+    code = run(backup_command(engine, container_name(root, "bench"), site, args.with_files),
+               exec_=False)
+    if code != 0:
+        return code
+    # bench/sites is bind-mounted, so the backup is already on the host.
+    backups = Path(root) / "bench" / "sites" / site / "private" / "backups"
+    new = sorted(p for p in backups.glob("*") if p.is_file() and p.stat().st_mtime >= started - 1)
+    print("\nbackup files, on the host:")
+    for path in new:
+        print("  {}  ({:.1f} MB)".format(path, path.stat().st_size / 1e6))
+    if not new:
+        print("  none found in {}; bench may have written elsewhere".format(backups))
+    return 0
+
+
 def cmd_doctor(args):
     root = require_project(args)
     return doctor.run(root, require_config(root), skip_containers=args.no_containers)
@@ -198,7 +253,12 @@ def cmd_up(args):
     # stack says `erp-sandbox up`, and following that advice on a tree whose
     # data/mariadb is missing is exactly when the engine would create it.
     project.ensure_data_dirs(root)
-    command = compose_args(root, engine, compose) + ["up", "-d"] + list(args.services)
+    command = compose_args(root, engine, compose) + ["up", "-d"]
+    if args.recreate:
+        # The way to apply a changed [bench].env_file: an env_file is read when
+        # a container is created, so `restart` keeps the old values.
+        command.append("--force-recreate")
+    command += list(args.services)
     return run(command, cwd=str(root), exec_=False)
 
 
@@ -343,10 +403,13 @@ def cmd_mariadb(args):
         fail("{} names no db_name. The site is not usable.".format(site_config))
 
     engine, _compose = engine_or_fail()
-    # -e passes the password to the container without it appearing in argv.
+    # `-e NAME` with no value: docker and podman both take the value from this
+    # process's environment, so the password is in no command line -- not the
+    # container's, and not the engine client's, which `ps` shows to every user.
     command = [engine, "exec"] + (["-it"] if tty else ["-i"])
     for key, value in env.items():
-        command += ["-e", "{}={}".format(key, value)]
+        command += ["-e", key]
+        os.environ[key] = value
     command += [container_name(root, "bench")] + argv
     return run(command)
 
@@ -429,6 +492,13 @@ def cmd_init(args):
         shutil.copyfile(project.SAMPLE_SECRETS, secrets)
         os.chmod(secrets, 0o600)
         created.append(".erp-sandbox/secrets.env  (0600)")
+
+    # A sample, not the file: [bench].env_file is optional, and an empty file
+    # loaded into the container would only be noise.
+    bench_sample = project.state_dir(target) / project.SAMPLE_BENCH_ENV.name
+    if not bench_sample.exists():
+        shutil.copyfile(project.SAMPLE_BENCH_ENV, bench_sample)
+        created.append(".erp-sandbox/{}".format(project.SAMPLE_BENCH_ENV.name))
 
     gitignore = target / ".gitignore"
     if not gitignore.exists():
@@ -675,6 +745,19 @@ def build_parser():
     p.add_argument("--force", action="store_true", help="replace an existing site")
     p.add_argument("--dry-run", action="store_true")
 
+    p = add("restore", cmd_restore,
+            "replace the site with a dump given here: erp-sandbox restore <dump.sql.gz> --force")
+    p.add_argument("dump", help="the database dump, .sql or .sql.gz")
+    p.add_argument("--with-public-files", metavar="TAR", help="a public files tarball")
+    p.add_argument("--with-private-files", metavar="TAR", help="a private files tarball")
+    p.add_argument("--force", action="store_true",
+                   help="replace the existing site. Destroys its database.")
+    p.add_argument("--dry-run", action="store_true")
+
+    p = add("backup", cmd_backup, "run bench backup for the site; files land under bench/sites/")
+    p.add_argument("--with-files", action="store_true",
+                   help="include the public and private files")
+
     p = add("doctor", cmd_doctor, "diagnose the environment: 0 healthy, 1 degraded, 2 broken")
     p.add_argument("--no-containers", action="store_true",
                    help="skip everything that needs the stack running")
@@ -700,6 +783,8 @@ def build_parser():
 
     p = add("up", cmd_up, "start the stack")
     p.add_argument("services", nargs="*")
+    p.add_argument("--recreate", action="store_true",
+                   help="recreate the containers, which applies a changed [bench].env_file")
 
     add("down", cmd_down, "stop the stack and remove its containers")
 

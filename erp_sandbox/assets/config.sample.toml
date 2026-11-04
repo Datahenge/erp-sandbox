@@ -216,6 +216,17 @@ blobless             = true       # most of this clone is history you may never 
 # [secrets]
 # file = ".erp-sandbox/secrets.env"
 
+# ─── Runtime secrets for the apps ────────────────────────────────────────
+# Credentials the apps read from their environment at run time -- an API key,
+# an object store's key pair -- loaded into the bench container only, from a
+# file of their own. Never the [secrets] file above: that one holds the build
+# and host secrets, which stay out of the container. Omit to load nothing.
+#
+# Start from .erp-sandbox/bench.sample.env, which says how. A change to the
+# file takes effect with `erp-sandbox up --recreate bench`, not `restart`.
+# [bench]
+# env_file = ".erp-sandbox/bench.env"
+
 # ─── Database ────────────────────────────────────────────────────────────
 [database]
 root_password  = "env:DB_ROOT_PASSWORD"

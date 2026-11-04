@@ -13,6 +13,7 @@ pointed at.
 | Site loads, realtime does nothing | [socket.io route](#the-site-loads-but-realtime-does-nothing) |
 | `SyntaxError: unexpected EOF` during the site step | [Old erp-sandbox](#syntaxerror-unexpected-eof-while-parsing-during-a-restore) |
 | `file: not found` during a v16 restore | [Old bench image](#file-not-found-during-a-v16-restore) |
+| An app does not see a runtime secret | [Container not recreated](#an-app-does-not-see-a-runtime-secret) |
 | `ADMIN_PASSWORD` rejected after a restore | [The dump's password wins](#the-admin-password-does-not-work-after-restoring-a-dump) |
 | Dependency conflicts after `build-bench` | [Conflicting pins](#dependency-conflicts-after-build-bench) |
 | `doctor` reports drift | [Hand-edited generated file](#a-generated-file-was-hand-edited) |
@@ -76,6 +77,8 @@ pointed at.
   `ports.mariadb` in this one and re-render.
 - Each environment needs its own pair. `erp-sandbox preflight` checks both before
   doing any work.
+- A port held by this environment's own running container is not reported —
+  only one held by something else.
 
 ## `No module named 'X'` during the site step
 
@@ -154,6 +157,18 @@ The restore stops with `CommandFailedError`.
   3. `erp-sandbox build --only image`
   4. `erp-sandbox build --from site --force`
 - Nothing was restored when this fires.
+
+## An app does not see a runtime secret
+
+`erp-sandbox doctor` reports a name from `[bench].env_file` as not set in the
+bench container.
+
+- **Cause:** the container was created before the file changed. An env_file is
+  read only when the container is created.
+- **Fix:**
+  1. `erp-sandbox render`
+  2. `erp-sandbox up --recreate bench`
+- `erp-sandbox restart` does not apply it.
 
 ## The admin password does not work after restoring a dump
 

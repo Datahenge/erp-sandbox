@@ -221,10 +221,16 @@ pointing somewhere later commands will silently inherit.
   in the developer's shell rather than in a file.
 - Commit `config.sample.toml`; `config.toml` and `.env` stay gitignored.
 - Never print a real password or token into a transcript, log, or document.
+- **No secret on a command line** — the tool's, the engine client's, or one
+  inside a container. Every one is in `ps` for every user. Pass secrets by
+  environment or stdin; the mechanisms are in
+  [docs/technical.md](docs/technical.md) §5, "No secret on a command line".
+- **The bench container gets runtime secrets from `[bench].env_file` only**
+  (#61). Never load the `[secrets]` file into a container.
 
 ### Subprocesses
 
-- **A git started by the tool runs without git's repository variables.** Go
-  through `fetch_apps.Git`, or drop `fetch_apps.git_local_env_vars()` from the
-  environment yourself. Inherited from a git hook, they point the child at the
+- **A git started by the tool runs without git's repository variables.** Pass
+  `env=project.git_env()` to every git subprocess, or go through
+  `fetch_apps.Git` or doctor's `_git`, which do. Inherited from a git hook, they point the child at the
   outer repository's index. Mechanism: [docs/technical.md](docs/technical.md) §5.

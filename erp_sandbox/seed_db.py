@@ -39,10 +39,38 @@ SERVICE_MARIADB = "mariadb"
 # ---------------------------------------------------------------------------
 # The scripts that run inside the container
 #
-# Each receives its arguments positionally, so no value is ever interpolated
-# into a shell string. A password containing a quote would otherwise be a
-# broken script at best.
+# Ordinary values arrive as positional arguments, so none is interpolated into
+# a shell string. Secrets do not: an argument is on the command line, and every
+# command line on the host -- the compose client's included -- is in `ps` for
+# any user to read, which on a shared VPS (#48) is other developers. They
+# arrive instead in secret_preamble(), on the script's stdin, and are passed on
+# by environment: MYSQL_PWD for the mariadb client, and bench_with_secrets for
+# frappe, which takes a password only as an option or from site_config.json.
 # ---------------------------------------------------------------------------
+
+# The environment variables the scripts read their secrets from.
+SECRET_ENV = {
+    "database.root_password": "DB_ROOT_PASSWORD",
+    "site.admin_password": "ADMIN_PASSWORD",
+    "database.encryption_key": "ENCRYPTION_KEY",
+}
+
+
+def secret_preamble(secrets):
+    """`export NAME=value` lines for the top of a script fed to bash on stdin.
+
+    shlex.quote makes each value one literal word whatever it contains. stdin,
+    unlike argv, is visible to no other process.
+    """
+    import shlex
+
+    lines = []
+    for field, name in SECRET_ENV.items():
+        value = secrets.get(field)
+        if value is not None:
+            lines.append("export {}={}".format(name, shlex.quote(value)))
+    return "\n".join(lines) + "\n"
+
 
 COMMON = r"""
 set -euo pipefail
@@ -50,8 +78,6 @@ set -euo pipefail
 cd "${BENCH_DIR:?BENCH_DIR is not set; this is not the bench image}"
 
 site="$1"; shift
-admin_password="$1"; shift
-db_root_password="$1"; shift
 # [site].db_name, or empty to let frappe choose. bench new-site takes it in
 # both v12 and v16, and a restore keeps whatever the empty site was created with.
 db_name="$1"; shift
@@ -61,6 +87,36 @@ if [ -n "$db_name" ]; then
 fi
 
 site_exists() { [ -d "sites/$site" ]; }
+
+# `bench <args> <option> <secret>...` without the secret in any command line.
+#
+#   bench_with_secrets --mariadb-root-password=DB_ROOT_PASSWORD -- --site s restore f
+#
+# bench runs a frappe command as `cd sites; env/bin/python -m
+# frappe.utils.bench_helper frappe <args>` (bench/cli.py, frappe_cmd), in v12
+# and v16 alike. This runs the same module, with each option's value appended
+# to sys.argv from the named environment variable inside the process, where
+# /proc/<pid>/cmdline never sees it.
+bench_with_secrets() {
+    ( cd sites && ../env/bin/python - "$@" <<'PYEND'
+import os, runpy, sys
+args = sys.argv[1:]
+split = args.index("--")
+rest = args[split + 1:]
+for spec in args[:split]:
+    option, _, variable = spec.partition("=")
+    rest += [option, os.environ[variable]]
+sys.argv = ["frappe.utils.bench_helper", "frappe"] + rest
+runpy.run_module("frappe.utils.bench_helper", run_name="__main__", alter_sys=True)
+PYEND
+    )
+}
+
+# The mariadb client as root. MYSQL_PWD rather than -p, for the same reason.
+root_sql() {
+    MYSQL_PWD="$DB_ROOT_PASSWORD" mariadb -h "${MARIADB_HOST:-mariadb}" \
+        -P "${INTERNAL_MARIADB_PORT:?}" -uroot "$@"
+}
 
 # Leave exactly one grant for the site's database user: the one at '%'.
 #
@@ -76,12 +132,10 @@ site_exists() { [ -d "sites/$site" ]; }
 prune_stale_grants() {
     db_name="$(python3 -c "import json;print(json.load(open('sites/$site/site_config.json'))['db_name'])" 2>/dev/null || true)"
     [ -n "$db_name" ] || return 0
-    mariadb -h "${MARIADB_HOST:-mariadb}" -P "${INTERNAL_MARIADB_PORT:?}" \
-          -uroot -p"$db_root_password" -e "
+    root_sql -e "
               delete from mysql.user where user='$db_name' and host<>'%';
               flush privileges;" 2>/dev/null || true
-    remaining="$(mariadb -h "${MARIADB_HOST:-mariadb}" -P "${INTERNAL_MARIADB_PORT}" \
-                 -uroot -p"$db_root_password" -N -B -e "
+    remaining="$(root_sql -N -B -e "
                      select count(*) from mysql.user where user='$db_name';" 2>/dev/null || echo "?")"
     echo "   grants for $db_name: $remaining (expect 1, at '%')"
 }
@@ -106,6 +160,32 @@ with open(path, "w") as handle:
 print("   site_config.json: %s set" % key)
 PYEND
 }
+
+# The same, with the value read from an environment variable rather than argv.
+set_site_config_from_env() {
+    python3 - "$site" "$1" "$2" <<'PYEND'
+import json, os, sys
+site, key, variable = sys.argv[1], sys.argv[2], sys.argv[3]
+path = "sites/%s/site_config.json" % site
+with open(path) as handle:
+    config = json.load(handle)
+config[key] = os.environ[variable]
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=1, sort_keys=True)
+print("   site_config.json: %s set" % key)
+PYEND
+}
+
+drop_site() {
+    bench_with_secrets --root-password=DB_ROOT_PASSWORD -- \
+        drop-site "$site" --no-backup --force
+}
+
+create_site() {
+    bench_with_secrets --mariadb-root-password=DB_ROOT_PASSWORD \
+                       --admin-password=ADMIN_PASSWORD -- \
+        new-site "$site" "${db_name_args[@]}" --no-mariadb-socket
+}
 """
 
 NEW_SITE = COMMON + r"""
@@ -120,17 +200,11 @@ if site_exists; then
         exit 1
     fi
     echo "== dropping the existing site (--force)"
-    bench drop-site "$site" \
-        --root-password "$db_root_password" \
-        --no-backup --force
+    drop_site
 fi
 
 echo "== creating $site"
-bench new-site "$site" \
-    --mariadb-root-password "$db_root_password" \
-    --admin-password "$admin_password" \
-    "${db_name_args[@]}" \
-    --no-mariadb-socket
+create_site
 
 for app in "$@"; do
     echo "== installing $app on $site"
@@ -148,9 +222,18 @@ RESTORE = COMMON + r"""
 force="$1"; shift
 mode="$1"; shift
 dump="$1"; shift
-encryption_key="$1"; shift
+# Optional tarballs of public and private files, or empty.
+public_files="$1"; shift
+private_files="$1"; shift
 
 [ -f "$dump" ] || { echo "FATAL: $dump is not readable inside the container." >&2; exit 1; }
+files_args=()
+if [ -n "$public_files" ]; then
+    files_args+=(--with-public-files "$public_files")
+fi
+if [ -n "$private_files" ]; then
+    files_args+=(--with-private-files "$private_files")
+fi
 
 if site_exists && [ "$force" != "1" ]; then
     echo "FATAL: sites/$site already exists. Re-run with --force to replace it." >&2
@@ -167,23 +250,17 @@ fi
 # the site directory cleanly, and is the same path new_site mode uses.
 if site_exists; then
     echo "== dropping the existing site before restoring (--force)"
-    bench drop-site "$site" \
-        --root-password "$db_root_password" \
-        --no-backup --force
+    drop_site
 fi
 
 echo "== creating an empty $site to restore into"
-bench new-site "$site" \
-    --mariadb-root-password "$db_root_password" \
-    --admin-password "$admin_password" \
-    "${db_name_args[@]}" \
-    --no-mariadb-socket
+create_site
 
 # Risk 6. The key has to be in place before anything reads an encrypted field.
 # Setting it afterwards is not the same: whatever was read in between was read
 # wrongly, and nothing says so.
 echo "== installing the encryption key that matches this dump"
-set_site_config encryption_key "$encryption_key"
+set_site_config_from_env encryption_key ENCRYPTION_KEY
 
 # --force skips frappe's is_downgrade() check, and skipping it is the point.
 # That check parses the dump by scanning for the tabInstalled Application
@@ -195,13 +272,12 @@ set_site_config encryption_key "$encryption_key"
 # It skips nothing else: in this frappe, restore's --force has exactly that
 # one effect.
 echo "== restoring $mode from $dump"
-bench --site "$site" restore "$dump" \
-    --mariadb-root-password "$db_root_password" \
-    --force
+bench_with_secrets --mariadb-root-password=DB_ROOT_PASSWORD -- \
+    --site "$site" restore "$dump" "${files_args[@]}" --force
 
 # The restore can rewrite site_config.json from the dump's own, which may carry
 # a different key or none at all. Put ours back afterwards.
-set_site_config encryption_key "$encryption_key"
+set_site_config_from_env encryption_key ENCRYPTION_KEY
 
 echo "== pruning host-specific database grants"
 prune_stale_grants
@@ -384,26 +460,29 @@ def find_unparseable_customizations(root):
     return bad
 
 
-def check_encryption_key(cfg, secrets):
+def check_encryption_key(cfg, secrets, seed=None):
     """
     Risk 6, checked before anything is dropped.
 
     validate() already refuses a dump mode with an empty encryption_key, so
     this catches the subtler case: a key that resolves to an empty string
-    through an `env:` reference that is set but blank.
+    through an `env:` reference that is set but blank -- and `erp-sandbox
+    restore`, which restores a dump whatever [database].seed says, so validate()
+    never asked for a key at all.
     """
-    seed = cfg["database"]["seed"]
+    seed = seed or cfg["database"]["seed"]
     if seed == "new_site":
         return None
     key = secrets.get("database.encryption_key", "")
     if not key.strip():
         raise SystemExit(
-            "database.encryption_key resolved to an empty value, and "
-            "database.seed = {!r} restores a dump.\n"
+            "database.encryption_key is empty or unset, and this restores a "
+            "dump ({}).\n"
             "Without the key that matches this dump, every stored password in "
             "the restored site is unreadable. Nothing announces it: the site "
             "loads, logins work, and then an integration cannot authenticate "
-            "weeks later. Refusing to restore.".format(seed)
+            "weeks later. Set database.encryption_key in config.toml to the "
+            "dump's key. Refusing to restore.".format(seed)
         )
     return key
 
@@ -530,7 +609,14 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true",
                         help="replace an existing site. Destroys its database.")
     parser.add_argument("--dry-run", action="store_true")
+    # `erp-sandbox restore`: a dump given on the command line, restored whatever
+    # [database].seed says, through the same path as a frappe_backup seed.
+    parser.add_argument("--dump", help="restore this dump instead of seeding per config.toml")
+    parser.add_argument("--public-files", help="with --dump: a public files tarball")
+    parser.add_argument("--private-files", help="with --dump: a private files tarball")
     args = parser.parse_args(argv)
+    if (args.public_files or args.private_files) and not args.dump:
+        parser.error("--public-files and --private-files need --dump")
 
     try:
         cfg = load_config(args.config)
@@ -547,13 +633,13 @@ def main(argv=None):
         sys.stderr.write("warning: {}\n".format(warning))
 
     site = cfg["project"]["site"]
-    seed = cfg["database"]["seed"]
+    seed = "frappe_backup" if args.dump else cfg["database"]["seed"]
     # frappe is excluded: `bench new-site` installs the framework itself, and
     # `install-app frappe` on top of that is an error. apps.txt still lists it,
     # because that file describes what is on the site rather than what has to be
     # installed onto it.
     apps = [a["name"] for a in cfg["apps"] if a["install"] and a["name"] != "frappe"]
-    key = check_encryption_key(cfg, secrets)
+    key = check_encryption_key(cfg, secrets, seed)
 
     engine, compose_cmd = detect_engine()
     if engine is None or compose_cmd is None:
@@ -570,10 +656,24 @@ def main(argv=None):
         script = NEW_SITE
         script_args = ["1" if args.force else "0"] + apps
     else:
-        dump_host = Path(cfg["database"]["dump_path"]).expanduser()
+        dump_host = Path(args.dump or cfg["database"]["dump_path"]).expanduser()
         if not dump_host.is_file():
-            sys.stderr.write("database.dump_path {} does not exist\n".format(dump_host))
+            sys.stderr.write("{} {} does not exist\n".format(
+                "the dump" if args.dump else "database.dump_path", dump_host))
             return 2
+        files = {}
+        for label, value in (("public", args.public_files), ("private", args.private_files)):
+            if value:
+                path = Path(value).expanduser()
+                if not path.is_file():
+                    sys.stderr.write("the {} files tarball {} does not exist\n"
+                                     .format(label, path))
+                    return 2
+                # A name of its own under /tmp, so the two cannot collide with
+                # each other or with the dump.
+                files[label] = (path, "/tmp/{}-files-{}".format(label, path.name))
+                print("  {} files: {} ({:.1f} MB)".format(label, path,
+                                                         path.stat().st_size / 1e6))
         print("  dump: {} ({:.1f} MB)".format(dump_host, dump_host.stat().st_size / 1e6))
         print("  encryption_key: present ({} characters)".format(len(key)))
         # Also on --dry-run: it only reads files, and checking what a dump
@@ -595,7 +695,9 @@ def main(argv=None):
         # goes away with it, but it does mean a large dump needs its own size
         # again in free space while restoring.
         container_dump = "/tmp/{}".format(dump_host.name)
-        script_args = ["1" if args.force else "0", seed, container_dump, key]
+        script_args = ["1" if args.force else "0", seed, container_dump,
+                       files["public"][1] if "public" in files else "",
+                       files["private"][1] if "private" in files else ""]
 
     command = compose_prefix(engine, compose_cmd, args.root) + [
         "run", "--rm", "--no-deps", "-T",
@@ -603,23 +705,23 @@ def main(argv=None):
     ]
     if seed != "new_site":
         command += ["-v", "{}:{}:ro".format(dump_host.resolve(), container_dump)]
+        for host_path, container_path in files.values():
+            command += ["-v", "{}:{}:ro".format(host_path.resolve(), container_path)]
+    # No secret in this list: it is the compose client's command line, which
+    # `ps` shows to every user for as long as the seed runs.
     command += ["bench", "bash", "-s", "--",
                 site,
-                secrets["site.admin_password"],
-                secrets["database.root_password"],
                 cfg["site"].get("db_name", "")] + script_args
 
     if args.dry_run:
-        redacted = [a if a not in (secrets["site.admin_password"],
-                                   secrets["database.root_password"],
-                                   key) else "<redacted>" for a in command]
-        print("\nwould run:\n  {}".format(" ".join(redacted)))
+        print("\nwould run:\n  {}".format(" ".join(command)))
         return 0
 
     # Bytes, not text. A restore streams a gzipped dump and some of it reaches
     # stderr; decoding that as UTF-8 raises and loses the entire log, including
     # whatever the real failure was.
-    result = subprocess.run(command, input=script.encode("utf-8"),
+    script_input = secret_preamble(secrets) + script
+    result = subprocess.run(command, input=script_input.encode("utf-8"),
                             cwd=str(args.root), capture_output=True)
     # bench redraws progress bars with \r thousands of times; keeping them
     # turns a useful log into 70KB of one line.

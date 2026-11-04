@@ -31,6 +31,7 @@ import tempfile
 from pathlib import Path
 
 
+from erp_sandbox import doctor  # noqa: E402
 from erp_sandbox import fetch_apps  # noqa: E402
 from erp_sandbox import render  # noqa: E402
 from erp_sandbox.preflight import (  # noqa: E402
@@ -1173,7 +1174,7 @@ def run_cli_cases(results, workdir):
 
     # 3. Every verb is dispatchable -- declared *and* wired to a function.
     unwired = [v for v in verbs
-               if not hasattr(parser.parse_args([v] if v not in ("bench",) else [v, "x"]),
+               if not hasattr(parser.parse_args([v] if v not in ("bench", "restore") else [v, "x"]),
                               "func")]
     if unwired:
         results.fail("cli: every verb is wired to a handler", ", ".join(unwired))
@@ -1817,29 +1818,78 @@ def run_db_name_cases(results, workdir):
 
     for label, db_name, expected in (("set", "acme_dev", ["--db-name", "acme_dev"]),
                                      ("unset", "", [])):
-        bench = Path(workdir) / ("db-name-" + label)
-        tools = bench / "stub-bin"
-        tools.mkdir(parents=True)
-        record = bench / "new-site-args.txt"
-        (tools / "bench").write_text(
-            '#!/bin/sh\nfor a in "$@"; do echo "$a"; done >> {}\n'.format(record),
-            encoding="utf-8")
-        (tools / "bench").chmod(0o755)
-        run = subprocess.run(
-            ["bash", "-s", "--", "site1", "admin-pw", "root-pw", db_name, "0"],
-            input=seed_db.NEW_SITE.split('for app in "$@"; do')[0].encode("utf-8"),
-            cwd=str(bench), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
-            env=dict(os.environ, BENCH_DIR=str(bench),
-                     PATH="{}:{}".format(tools, os.environ.get("PATH", ""))))
-        args = record.read_text(encoding="utf-8").split("\n") if record.exists() else []
+        calls, run = run_new_site_script(Path(workdir) / ("db-name-" + label), db_name)
+        args = calls[0]["argv"] if calls else []
         passed = [a for a in args if a in ("--db-name", "acme_dev")]
         name = "site.db_name {}: bench new-site {}".format(
             label, "gets --db-name acme_dev" if expected else "gets no --db-name")
         if run.returncode == 0 and "new-site" in args and passed == expected:
             results.ok(name)
         else:
-            results.fail(name, "exit {}, args {}; {}".format(
-                run.returncode, args, run.stdout.decode("utf-8", "replace")[-300:]))
+            results.fail(name, "exit {}, calls {}; {}".format(
+                run.returncode, calls, run.stdout.decode("utf-8", "replace")[-300:]))
+
+    # The passwords reach frappe, and no command line.
+    calls, run = run_new_site_script(Path(workdir) / "db-name-secrets", "")
+    args = calls[0]["argv"] if calls else []
+    cmdline = " ".join(calls[0]["cmdline"]) if calls else ""
+    reached = (args[args.index("--mariadb-root-password") + 1] == FAKE_ROOT_PASSWORD
+               if "--mariadb-root-password" in args else False) \
+        and "--admin-password" in args \
+        and args[args.index("--admin-password") + 1] == FAKE_ADMIN_PASSWORD
+    leaked = [s for s in (FAKE_ROOT_PASSWORD, FAKE_ADMIN_PASSWORD) if s in cmdline]
+    if run.returncode == 0 and reached and not leaked:
+        results.ok("seed: frappe gets the passwords as options, and no command line shows them",
+                   "bench_with_secrets appends them to sys.argv inside the process")
+    else:
+        results.fail("seed: frappe gets the passwords as options, and no command line shows them",
+                     "exit {}, reached {}, in cmdline: {}; {}".format(
+                         run.returncode, reached, leaked,
+                         run.stdout.decode("utf-8", "replace")[-300:]))
+
+
+FAKE_ROOT_PASSWORD = "root-pw-'quoted\" $x"
+FAKE_ADMIN_PASSWORD = "admin-pw-; echo"
+
+# Stands in for frappe.utils.bench_helper: records what frappe would be given,
+# and what `ps` would show for the process.
+FAKE_BENCH_HELPER = """
+import json, os, sys
+if __name__ == "__main__":
+    with open(os.environ["SELFTEST_RECORD"], "a") as handle:
+        cmdline = open("/proc/self/cmdline", "rb").read().decode().split("\\0")
+        handle.write(json.dumps({"argv": sys.argv[1:], "cmdline": cmdline}) + "\\n")
+"""
+
+
+def run_new_site_script(bench, db_name):
+    """NEW_SITE, up to the app installs, against a fake frappe. ([calls], CompletedProcess)."""
+    import json
+    import sys as _sys
+    from erp_sandbox import seed_db
+
+    (bench / "sites").mkdir(parents=True)
+    (bench / "env" / "bin").mkdir(parents=True)
+    os.symlink(_sys.executable, bench / "env" / "bin" / "python")
+    package = bench / "fake-frappe" / "frappe" / "utils"
+    package.mkdir(parents=True)
+    (package.parent / "__init__.py").write_text("", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "bench_helper.py").write_text(FAKE_BENCH_HELPER, encoding="utf-8")
+    record = bench / "calls.jsonl"
+
+    script = seed_db.secret_preamble({"database.root_password": FAKE_ROOT_PASSWORD,
+                                      "site.admin_password": FAKE_ADMIN_PASSWORD}) \
+        + seed_db.NEW_SITE.split('for app in "$@"; do')[0]
+    run = subprocess.run(
+        ["bash", "-s", "--", "site1", db_name, "0"],
+        input=script.encode("utf-8"),
+        cwd=str(bench), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        env=dict(os.environ, BENCH_DIR=str(bench), SELFTEST_RECORD=str(record),
+                 PYTHONPATH=str(bench / "fake-frappe")))
+    calls = [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()] \
+        if record.exists() else []
+    return calls, run
 
 
 def run_rename_cases(results, workdir):
@@ -2097,6 +2147,308 @@ def run_genericity(results):
 # temporary directory.
 # ---------------------------------------------------------------------------
 
+def run_bench_env_cases(results, sample_text, workdir):
+    """[bench].env_file: runtime secrets for the bench container, and only those."""
+    from erp_sandbox import preflight
+
+    with_env = sample_text + '\n[bench]\nenv_file = ".erp-sandbox/bench.env"\n'
+
+    # --- config --------------------------------------------------------------
+    expect_rejected(results, "bench.env_file cannot be .env",
+                    sample_text + '\n[bench]\nenv_file = ".env"\n',
+                    ["bench.env_file cannot be '.env'"], workdir)
+    expect_rejected(results, "an unknown [bench] key",
+                    sample_text + '\n[bench]\nenvfile = "x"\n',
+                    ["bench.envfile is not a recognised key"], workdir)
+
+    # --- render ----------------------------------------------------------------
+    def outputs(text, name):
+        cfg = load_config(write_config(workdir, text, name=name))
+        return render.build_outputs(cfg, {"database.root_password": "x",
+                                           "site.admin_password": "y"}, 1000, 1000)
+
+    plain, loaded = outputs(sample_text, "bench-env-off.toml"), outputs(with_env, "bench-env-on.toml")
+    overlays = ("compose.docker.yml", "compose.podman.yml")
+    wanted = 'env_file:\n      - "./.erp-sandbox/bench.env"'
+    if all(wanted in loaded[o][0] for o in overlays) \
+            and not any("env_file" in plain[o][0] for o in overlays):
+        results.ok("render: [bench].env_file reaches the bench service in both overlays, "
+                   "and only when set")
+    else:
+        results.fail("render: [bench].env_file reaches the bench service in both overlays, "
+                     "and only when set",
+                     "\n".join("{}:\n{}".format(o, loaded[o][0][-300:]) for o in overlays))
+    base = (project.ASSET_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+    if not any(line.strip().startswith("env_file:") for line in base.splitlines()):
+        results.ok("render: no service but bench is given the env_file",
+                   "the base compose file names none; the overlays add it to bench alone")
+    else:
+        results.fail("render: no service but bench is given the env_file",
+                     "docker-compose.yml has an env_file: key")
+    rule = ".claude/rules/erp-sandbox-environment.md"
+    if "up --recreate bench" in loaded[rule][0] and "up --recreate" not in plain[rule][0]:
+        results.ok("briefing: a configured env_file says how a change takes effect")
+    else:
+        results.fail("briefing: a configured env_file says how a change takes effect",
+                     "the rendered briefing does not name `erp-sandbox up --recreate bench`")
+
+    # --- preflight -------------------------------------------------------------
+    root = Path(workdir) / "bench-env"
+    (root / ".erp-sandbox").mkdir(parents=True)
+    config = write_config(root, with_env, name="config.toml")
+    env_file = root / ".erp-sandbox" / "bench.env"
+    value = "wm-value-must-never-print-7781"
+
+    def check(text, mode=0o600):
+        if text is None:
+            if env_file.exists():
+                env_file.unlink()
+        else:
+            env_file.write_text(text, encoding="utf-8")
+            env_file.chmod(mode)
+        report = preflight.Report()
+        preflight.check_bench_env_file(report, load_config(config), config)
+        return report.rows
+
+    def statuses(rows):
+        return {label: status for status, label, _detail in rows}
+
+    def printed(rows):
+        return " ".join("{} {}".format(label, detail) for _s, label, detail in rows)
+
+    good = check("WINDMILL_API_KEY={}\n".format(value))
+    missing = check(None)
+    readable = check("WINDMILL_API_KEY={}\n".format(value), 0o644)
+    shared = check("WINDMILL_API_KEY={}\nDB_ROOT_PASSWORD=x\n".format(value))
+    dollar = check("WINDMILL_API_KEY=a$b\n")
+    if "fail" not in statuses(good).values() and "WINDMILL_API_KEY" in printed(good):
+        results.ok("preflight: a private bench env file passes, and is reported by name")
+    else:
+        results.fail("preflight: a private bench env file passes, and is reported by name",
+                     repr(good))
+    if statuses(missing).get("bench env file") == "fail":
+        results.ok("preflight: a configured bench env file that does not exist fails")
+    else:
+        results.fail("preflight: a configured bench env file that does not exist fails",
+                     repr(missing))
+    if statuses(readable).get("bench env file is readable by others") == "fail":
+        results.ok("preflight: a bench env file readable by others fails")
+    else:
+        results.fail("preflight: a bench env file readable by others fails", repr(readable))
+    if statuses(shared).get("bench env file holds build secrets") == "fail" \
+            and "DB_ROOT_PASSWORD" in printed(shared):
+        results.ok("preflight: a bench env file holding a build secret's name fails",
+                   "DB_ROOT_PASSWORD is config.toml's env:DB_ROOT_PASSWORD")
+    else:
+        results.fail("preflight: a bench env file holding a build secret's name fails",
+                     repr(shared))
+    if statuses(dollar).get("bench env file: a value contains '$'") == "warn":
+        results.ok("preflight: a '$' in a bench env value is warned about")
+    else:
+        results.fail("preflight: a '$' in a bench env value is warned about", repr(dollar))
+    leaked = [label for label, rows in (("good", good), ("readable", readable),
+                                        ("shared", shared)) if value in printed(rows)]
+    if leaked:
+        results.fail("preflight: no bench env value is ever reported",
+                     "the value appeared in: {}".format(", ".join(leaked)))
+    else:
+        results.ok("preflight: no bench env value is ever reported")
+
+    samples = project.SAMPLE_BENCH_ENV.read_text(encoding="utf-8")
+    if "up --recreate bench" in samples and not any(
+            line.split("=", 1)[1].strip() for line in samples.splitlines()
+            if "=" in line and not line.lstrip().startswith("#")):
+        results.ok("bench.sample.env ships, holds no value, and says how to apply it")
+    else:
+        results.fail("bench.sample.env ships, holds no value, and says how to apply it",
+                     "check erp_sandbox/assets/bench.sample.env")
+
+
+def run_restore_backup_cases(results, sample_text, workdir):
+    """`erp-sandbox restore` and `backup`, short of a container."""
+    from erp_sandbox import cli, seed_db
+
+    root = Path(workdir) / "restore-env"
+    root.mkdir()
+    (root / "compose.podman.yml").write_text("services: {}\n", encoding="utf-8")
+    dump = root / "site-database.sql.gz"
+    public = root / "site-files.tar"
+    for path in (dump, public):
+        path.write_bytes(b"")
+    key = "k" * 44
+    keyed = sample_text.replace('encryption_key = ""', 'encryption_key = "env:ENCRYPTION_KEY"', 1)
+    passwords = dict(DB_ROOT_PASSWORD="root-pw-42", ADMIN_PASSWORD="admin-pw-42",
+                     ENCRYPTION_KEY=key)
+
+    def restore(text, *extra):
+        config = write_config(root, text, name="config.toml")
+        argv = ["--config", str(config), "--root", str(root), "--dump", str(dump),
+                "--dry-run"] + list(extra)
+        out, err = io.StringIO(), io.StringIO()
+        saved = seed_db.detect_engine
+        seed_db.detect_engine = lambda: ("podman", "podman-compose")
+        try:
+            with environment(**passwords), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(err):
+                try:
+                    code = seed_db.main(argv)
+                except SystemExit as exc:
+                    code = exc.code
+        finally:
+            seed_db.detect_engine = saved
+        return code, out.getvalue(), err.getvalue() + (code if isinstance(code, str) else "")
+
+    code, out, _err = restore(keyed, "--public-files", str(public))
+    command = out.split("would run:")[-1]
+    mounted = "{}:/tmp/{}:ro".format(dump.resolve(), dump.name) in command \
+        and ":/tmp/public-files-{}:ro".format(public.name) in command
+    leaked = [v for v in passwords.values() if v in out]
+    if code == 0 and mounted and not leaked:
+        results.ok("restore: the dump and files are mounted, and no secret is on the command line")
+    else:
+        results.fail("restore: the dump and files are mounted, and no secret is on the command line",
+                     "exit {!r}, mounted {}, leaked {}\n{}".format(code, mounted, leaked,
+                                                                   out[-400:]))
+
+    code, _out, err = restore(sample_text)
+    if code not in (0, None) and "encryption_key" in str(err):
+        results.ok("restore: refused when config.toml has no encryption_key for the dump")
+    else:
+        results.fail("restore: refused when config.toml has no encryption_key for the dump",
+                     "exit {!r}: {}".format(code, err[-300:]))
+
+    if seed_db.secret_preamble({"database.root_password": "a'b"}) \
+            == "export DB_ROOT_PASSWORD='a'\"'\"'b'\n":
+        results.ok("seed: secrets reach the script as quoted exports on stdin")
+    else:
+        results.fail("seed: secrets reach the script as quoted exports on stdin",
+                     repr(seed_db.secret_preamble({"database.root_password": "a'b"})))
+
+    if cli.backup_command("docker", "acme-bench", "acme.localhost", True) == \
+            ["docker", "exec", "acme-bench", "bench", "--site", "acme.localhost",
+             "backup", "--with-files"]:
+        results.ok("backup: bench backup runs in the bench container for the site")
+    else:
+        results.fail("backup: bench backup runs in the bench container for the site",
+                     repr(cli.backup_command("docker", "acme-bench", "acme.localhost", True)))
+
+
+def run_running_env_cases(results, sample_text, workdir):
+    """Checks that misread a healthy, running v16 environment. No containers."""
+    from erp_sandbox import preflight
+
+    # --- bench version: two fields, or four from bench 5.31 -----------------
+    old = doctor.parse_bench_version("frappe 12.26.0\nerpnext 12.30.0\n")
+    new = doctor.parse_bench_version(
+        "frappe 16.25.0 HEAD (9a8daf3)\n"
+        "acme_app 0.1.214 version-16-staging (16edb49)\n")
+    if old == {"frappe": "12.26.0", "erpnext": "12.30.0"} \
+            and new == {"frappe": "16.25.0", "acme_app": "0.1.214"}:
+        results.ok("doctor: bench version is read in both its two- and four-field forms")
+    else:
+        results.fail("doctor: bench version is read in both its two- and four-field forms",
+                     "two fields: {!r}; four fields: {!r}".format(old, new))
+
+    # --- socket.io: EIO=4 for v16, EIO=3 for older series -------------------
+    unsupported = '{"code":5,"message":"Unsupported protocol version"}'
+
+    def server(speaks):
+        def fetch(url):
+            return '0{"sid":"abc"}' if "EIO={}&".format(speaks) in url else unsupported
+        return fetch
+
+    v16 = doctor.socketio_probe("h:1", fetch=server(4))
+    v12 = doctor.socketio_probe("h:1", fetch=server(3))
+    dead = doctor.socketio_probe("h:1", fetch=lambda url: unsupported)
+    if v16[0] == 4 and v12[0] == 3 and dead[0] is None and "Unsupported" in (dead[1] or ""):
+        results.ok("doctor: socket.io is probed at EIO=4, then EIO=3, and a refusal is shown")
+    else:
+        results.fail("doctor: socket.io is probed at EIO=4, then EIO=3, and a refusal is shown",
+                     "v16 {!r}, v12 {!r}, dead {!r}".format(v16, v12, dead))
+
+    # --- host-specific grants: harmless when they match '%' -----------------
+    def grants_for(host, privilege="ALL PRIVILEGES"):
+        return ("GRANT USAGE ON *.* TO `_abc`@`{0}` IDENTIFIED BY PASSWORD '*DEADBEEF'\n"
+                "GRANT {1} ON `_abc`.* TO `_abc`@`{0}`\n".format(host, privilege))
+
+    bench_ip = "172.20.0.5"
+    same = doctor.risky_host_grants(
+        "_abc", [["%", "1"], [bench_ip, "1"]],
+        {"%": grants_for("%"), bench_ip: grants_for(bench_ip)})
+    password = doctor.risky_host_grants(
+        "_abc", [["%", "1"], [bench_ip, "0"]],
+        {"%": grants_for("%"), bench_ip: grants_for(bench_ip)})
+    privileges = doctor.risky_host_grants(
+        "_abc", [["%", "1"], [bench_ip, "1"]],
+        {"%": grants_for("%"), bench_ip: grants_for(bench_ip, "SELECT")})
+    reasons = " ".join(why for _host, why in password + privileges)
+    if same == [] and len(password) == 1 and len(privileges) == 1 \
+            and "password" in password[0][1] and "privileges" in privileges[0][1] \
+            and "DEADBEEF" not in reasons:
+        results.ok("doctor: a host row matching '%' is harmless; a different password or "
+                   "privilege is not")
+    else:
+        results.fail("doctor: a host row matching '%' is harmless; a different password or "
+                     "privilege is not",
+                     "same {!r}, password {!r}, privileges {!r}".format(same, password,
+                                                                        privileges))
+
+    # --- the briefing's web URL follows ports.bind --------------------------
+    def briefing(text, name):
+        cfg = load_config(write_config(workdir, text, name=name))
+        outputs = render.build_outputs(cfg, {"database.root_password": "x",
+                                             "site.admin_password": "y"}, 1000, 1000)
+        return outputs[".claude/rules/erp-sandbox-environment.md"][0]
+
+    bound = sample_text.replace('# bind  = "127.0.0.1"', 'bind  = "172.18.0.1"', 1)
+    default_rule = briefing(sample_text, "briefing-default.toml")
+    bound_rule = briefing(bound, "briefing-bound.toml")
+    if bound == sample_text:
+        results.fail("briefing: the web URL is where nginx is published",
+                     "config.sample.toml no longer has the commented bind line to replace")
+    elif "http://localhost:8101" in default_rule and "http://172.18.0.1:8101" in bound_rule:
+        results.ok("briefing: the web URL is where nginx is published",
+                   "localhost by default; [ports].bind when set")
+    else:
+        results.fail("briefing: the web URL is where nginx is published",
+                     "the rendered Web row does not follow [ports].bind")
+
+    # --- preflight: this environment's own ports ----------------------------
+    ps = ("acme-nginx\t127.0.0.1:8101->80/tcp\n"
+          "acme-mariadb\t127.0.0.1:3316->3306/tcp\n"
+          "acme-redis\t\n"
+          "acme2-nginx\t127.0.0.1:8102->80/tcp\n"
+          "other\t0.0.0.0:9000->9000/tcp, [::]:9000->9000/tcp\n")
+    holders = preflight.parse_port_holders(ps, "acme")
+    if holders == {8101: "acme-nginx", 3316: "acme-mariadb"}:
+        results.ok("preflight: a port held by this environment's own container is not a "
+                   "collision")
+    else:
+        results.fail("preflight: a port held by this environment's own container is not a "
+                     "collision", "holders were {!r}".format(holders))
+
+    # --- preflight: the 20 GB minimum is for a first build ------------------
+    def disk(root, gb):
+        report = preflight.Report()
+        preflight.check_disk(report, root, gb)
+        return report.rows[0][0]
+
+    fresh = Path(workdir) / "disk-fresh"
+    built = Path(workdir) / "disk-built"
+    fresh.mkdir()
+    (built / "bench" / "env" / "bin").mkdir(parents=True)
+    # A dangling link, exactly as on a real host (decision #22).
+    os.symlink("/nonexistent/python3", built / "bench" / "env" / "bin" / "python")
+    states = (disk(fresh, 15.8), disk(built, 15.8), disk(built, 4.0))
+    if states == ("fail", "ok", "warn"):
+        results.ok("preflight: 20 GB free is needed before the first build; once built, "
+                   "low space only warns")
+    else:
+        results.fail("preflight: 20 GB free is needed before the first build; once built, "
+                     "low space only warns",
+                     "fresh at 15.8, built at 15.8, built at 4.0 gave {!r}".format(states))
+
+
 def local_repo(directory):
     """A bare repo with two commits on 'main' and a tag on the first."""
     work = Path(directory) / "work"
@@ -2302,7 +2654,7 @@ def run_fetch_secrecy(results):
     with environment(**outer):
         env = git.env_for(None)
     leaked = sorted(set(outer) & set(env))
-    if "GIT_INDEX_FILE" not in fetch_apps.git_local_env_vars():
+    if "GIT_INDEX_FILE" not in project.git_local_env_vars():
         results.fail("fetch: a git hook's repository variables are not passed on",
                      "git rev-parse --local-env-vars did not list GIT_INDEX_FILE")
     elif leaked:
@@ -2510,7 +2862,7 @@ def main():
     # Run from the pre-commit hook, selftest inherits the outer commit's
     # repository variables, and every scratch repository below would read and
     # write the commit's index instead of its own.
-    for name in fetch_apps.git_local_env_vars():
+    for name in project.git_local_env_vars():
         os.environ.pop(name, None)
 
     results = Results()
@@ -2537,6 +2889,11 @@ def main():
         print("\nfrappe series")
         run_series_cases(results, workdir)
         run_build_fixes(results, workdir)
+
+        print("\ndoctor and preflight against a running environment")
+        run_running_env_cases(results, sample_text, workdir)
+        run_restore_backup_cases(results, sample_text, workdir)
+        run_bench_env_cases(results, sample_text, workdir)
 
         print("\nfetch_apps")
         run_fetch_cases(results, workdir)

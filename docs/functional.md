@@ -81,7 +81,7 @@ before involving a client's repositories.
 
 | # | Step | What it does | Idempotent? |
 |---|------|--------------|-------------|
-| 1 | `preflight` | **Python >= 3.11** (checked first); engine + compose; git; disk space; the two TOML ports are free; detect uid/gid; validate `config.toml`; resolve every `env:` secret and fail early if unset | yes |
+| 1 | `preflight` | **Python >= 3.11** (checked first); engine + compose; git; disk space (20 GB before the first build; once built, a warning below 10 GB, #60); the two TOML ports are free or held by this environment's own containers; detect uid/gid; validate `config.toml`; resolve every `env:` secret and fail early if unset | yes |
 | 2 | `render` | TOML → `.env`, engine overlay, nginx conf, site config, Procfile, apps.txt | yes |
 | 3 | `fetch` | clone each app into `bench/apps/`, host-side, credentials injected; an app with `blobless = true` is cloned without the contents of old commits | yes — skips an app already at the right ref |
 | 4 | `image` | build the bench image with build-args from `.env` | yes (layer cache) |

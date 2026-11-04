@@ -59,6 +59,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # is a question somebody will ask in two years. The list was derived from the
 # apps' own requirements.txt, not copied from a general-purpose Frappe image:
 #
+#   line 1  `file` because `bench restore` runs it on every backup to detect
+#           encryption (v15 and v16 do), and fails without it; slim base
+#           images lack it. Harmless on a series that does not call it
 #   line 3  mariadb-client for restores, redis-tools for debugging, and
 #           libpq-dev -- see below
 #   line 4  headers for the packages that build from source -- cryptography
@@ -92,7 +95,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget git xz-utils procps \
-        passwd adduser locales mime-support \
+        passwd adduser locales mime-support file \
     ; \
     if command -v python3 >/dev/null \
         && [ "$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "${PYTHON_VERSION}" ]; then \

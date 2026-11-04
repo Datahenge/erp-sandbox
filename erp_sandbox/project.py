@@ -21,6 +21,7 @@ part of the configuration (decision #27).
 """
 
 import os
+import subprocess
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -74,6 +75,7 @@ ASSET_DIR = PACKAGE_ROOT / "assets"
 FIXTURE_DIR = PACKAGE_ROOT / "fixtures"
 SAMPLE_CONFIG = ASSET_DIR / "config.sample.toml"
 SAMPLE_SECRETS = ASSET_DIR / "secrets.sample.env"
+SAMPLE_BENCH_ENV = ASSET_DIR / "bench.sample.env"
 
 
 # The marker before the product was renamed (decision #52). It is not accepted
@@ -144,6 +146,37 @@ def state_dir(project_root):
 
 def default_secrets_path(project_root):
     return state_dir(project_root) / SECRETS_NAME
+
+
+_git_local_env_vars = None
+
+
+def git_local_env_vars():
+    """The variables that point git at a particular repository.
+
+    A git hook exports them to everything it runs -- `git commit -a` sets
+    GIT_INDEX_FILE to its temporary index -- and a git started underneath would
+    then read and write the outer repository instead of its own. Git names its
+    own list, so it cannot drift from the installed version. Empty when git is
+    not installed, since then nothing will read them.
+    """
+    global _git_local_env_vars
+    if _git_local_env_vars is None:
+        try:
+            _git_local_env_vars = subprocess.run(
+                ["git", "rev-parse", "--local-env-vars"],
+                capture_output=True, text=True).stdout.split()
+        except OSError:
+            _git_local_env_vars = []
+    return _git_local_env_vars
+
+
+def git_env():
+    """os.environ without git's repository variables: the env for every git the tool starts."""
+    env = dict(os.environ)
+    for name in git_local_env_vars():
+        env.pop(name, None)
+    return env
 
 
 def data_dir(root, relative="data/mariadb"):
