@@ -1381,12 +1381,19 @@ def run_vps_cases(results, workdir):
     # --- behind a TLS-terminating proxy -------------------------------------
     nginx = laptop["conf/nginx/site.conf"][0]
     if "map $http_x_forwarded_proto $erp_sandbox_forwarded_proto" in nginx \
-            and "Origin $erp_sandbox_forwarded_proto://" in nginx \
+            and "X-Forwarded-Proto $erp_sandbox_forwarded_proto" in nginx \
             and "X-Forwarded-Proto $scheme" not in nginx:
-        results.ok("nginx passes the proxy's X-Forwarded-Proto through, and builds Origin from it")
+        results.ok("nginx passes the proxy's X-Forwarded-Proto through")
     else:
-        results.fail("nginx passes the proxy's X-Forwarded-Proto through, and builds Origin from it",
-                     "socketio's callback would go to http:// behind Caddy")
+        results.fail("nginx passes the proxy's X-Forwarded-Proto through",
+                     "Frappe would build http:// URLs behind Caddy")
+    socketio = nginx.split("location /socket.io", 1)[-1].split("location / {", 1)[0]
+    internal = "{}:{}".format(render.SERVICE_BENCH, laptop_cfg["internal_ports"]["web"])
+    if "Origin http://{};".format(internal) in socketio and "Host {};".format(internal) in socketio:
+        results.ok("socketio's auth callback goes to the bench web server, not the public URL")
+    else:
+        results.fail("socketio's auth callback goes to the bench web server, not the public URL",
+                     "behind a proxy, or with developer_mode on, realtime never authenticates")
 
     # --- #43: the Caddy block -----------------------------------------------
     root = Path("/srv/example/acme-dev")

@@ -942,17 +942,21 @@ the scheme:
 
 - **Frappe**, through `X-Forwarded-Proto`, when it builds URLs.
 - **Frappe's `socketio.js`**, which compares the hostname of `Host` with that
-  of `Origin` before accepting a connection, then authorises document
-  subscriptions by calling `Origin + path` from the node process. Read in a
-  v13-beta tree; v12 is assumed to behave the same until item 19 proves it.
+  of `Origin` before accepting a connection, then authorises it by calling
+  `Origin + path` from the node process. With `developer_mode` on, it replaces
+  Origin's port with `webserver_port` first.
 
 `nginx.site.conf.tmpl` therefore maps `$http_x_forwarded_proto` to
 `$erp_sandbox_forwarded_proto`, falling back to `$scheme` when nginx is the first
-hop, and builds both `X-Forwarded-Proto` and `Origin` from it. Behind Caddy the
-socketio callback goes to the public `https://` URL, which needs the bench
-container to resolve and reach the VPS's own public address. **Realtime behind
-Caddy is unverified** until a document updates live in a second tab through
-`https://` (testing.md §1, item 19).
+hop, and builds `X-Forwarded-Proto` from it. On `/socket.io` it sets both `Host`
+and `Origin` to the bench web server (`bench:<internal web port>`), and the site
+comes from `X-Frappe-Site-Name`. The socketio callback stays on the container
+network, so it works behind any proxy and with `developer_mode` on or off.
+
+- **Do not build `/socket.io`'s `Origin` from the public URL.** With
+  `developer_mode = 1` the callback becomes `https://<public host>:8000`, which
+  nothing answers. Every connection then stays unauthenticated, with no error in
+  the browser or the logs, and realtime events never arrive.
 
 ### `erp-sandbox proxy-snippet`
 

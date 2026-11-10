@@ -9,7 +9,13 @@ Dates are when the work landed on `main`.
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+- **Realtime behind a proxy with `developer_mode = 1`.** nginx now points
+  `/socket.io`'s `Host` and `Origin` at the bench web server, so socketio's auth
+  callback stays inside the container network. Before, the callback went to the
+  public URL on `webserver_port` and never answered, so no toast, notification or
+  live list update reached a browser. Run `erp-sandbox render`, then reload
+  nginx, in each existing environment.
 
 ## 0.7.0 — 2026-11-04
 
